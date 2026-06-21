@@ -2,4 +2,20 @@
 
 ## Prompt Logging
 
-Every time you receive a new instruction or prompt, append it to prompts.txt in the project root with a timestamp (ISO 8601) and a brief summary of what you did in response. Create the file if it doesn't exist. Keep this log updated throughout all sessions.
+Scope: this applies only to prompts the human user sends directly in the main/controller session. Do not apply it
+inside dispatched subagents (e.g. via the Agent/Task tool, or the superpowers subagent-driven-development /
+executing-plans skills) — a subagent's dispatch instructions are not a new user prompt, and subagents logging their
+own task briefs pollutes this file with noise and out-of-order timestamps.
+
+Every time the user sends a new instruction or prompt, append one entry to prompts.txt in the project root, in this
+format:
+
+```
+<ISO 8601 timestamp> | PROMPT: "<verbatim prompt text>" | SUMMARY: <brief summary of what you did in response>
+```
+
+- Use the verbatim prompt text, not a paraphrase. Truncate only if extremely long, with a trailing `[...]`.
+- Use the real current timestamp (e.g. via `date -u +%Y-%m-%dT%H:%M:%SZ`) — never a placeholder.
+- Write one entry per user prompt, after the response is complete, so the summary reflects the full work done
+  (including any subagents dispatched along the way).
+- Create the file if it doesn't exist. Keep this log updated throughout all sessions, in chronological order.
