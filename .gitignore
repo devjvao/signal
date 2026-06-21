@@ -1,0 +1,26 @@
+# JetBrains IDE
+.idea/
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.*.local
+
+# Claude / superpowers local state
+.claude/
+.superpowers/
