@@ -212,6 +212,32 @@ func (h *ProjectHandler) ListMine(c *gin.Context) {
 	c.JSON(http.StatusOK, projectsListResponse{Projects: projects, NextCursor: nextCursor})
 }
 
+func (h *ProjectHandler) Get(c *gin.Context) {
+	id := c.Param("id")
+	if !uuidPattern.MatchString(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		return
+	}
+	if _, ok := auth.UserID(c); !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	row, err := h.Queries.GetProjectByID(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"project": newProjectResponse(
+		row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName,
+	)})
+}
+
 type createProjectRequest struct {
 	Name        string  `json:"name" binding:"required,max=200"`
 	Description *string `json:"description" binding:"omitempty,max=2000"`
