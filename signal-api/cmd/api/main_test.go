@@ -7,11 +7,18 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"signal-api/internal/db"
+	"signal-api/internal/handlers"
 )
 
 func TestHealthEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r := setupRouter()
+	authHandler := &handlers.AuthHandler{
+		Queries:   db.New(nil),
+		JWTSecret: []byte("test-secret"),
+	}
+	r := setupRouter(authHandler, "http://localhost:5173")
 
 	w := httptest.NewRecorder()
 	req, err := http.NewRequest(http.MethodGet, "/health", nil)
