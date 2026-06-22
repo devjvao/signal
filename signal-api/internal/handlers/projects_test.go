@@ -632,3 +632,76 @@ func TestDelete_NotFound(t *testing.T) {
 		t.Fatalf("expected status 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestGet_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	projectID := seedProject(t, pool, ownerID, "Signal", "signal", time.Now())
+
+	secret := []byte("test-secret")
+	token, _ := auth.GenerateToken(secret, ownerID, "ada@example.com")
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.GET("/:id", h.Get)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Project struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Project.ID != projectID || resp.Project.Name != "Signal" {
+		t.Errorf("unexpected project %+v", resp.Project)
+	}
+}
+
+func TestGet_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	secret := []byte("test-secret")
+	token, _ := auth.GenerateToken(secret, ownerID, "ada@example.com")
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.GET("/:id", h.Get)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/00000000-0000-0000-0000-000000000000", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGet_InvalidID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := setupTestProjectHandler(t)
+	r := gin.New()
+	r.GET("/projects/:id", h.Get)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/not-a-uuid", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}

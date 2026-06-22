@@ -31,11 +31,14 @@ a starting draft.
   - `401 Unauthorized` — bad login credentials, or a missing/malformed/invalid/expired token
   - `403 Forbidden` — authenticated user is not the resource's owner
   - `404 Not Found` — no active resource with that id
-  - `409 Conflict` — registration with an email that's already registered
+  - `409 Conflict` — registration with an email that's already registered, or attempting to edit
+    a feature request that already has upvotes
   - `500 Internal Server Error` — unexpected server error
 
 ## Files
 
-- `entities.md` — shared data shapes (e.g. the User and Project entities)
+- `entities.md` — shared data shapes (e.g. the User, Project, and FeatureRequest entities)
 - `auth-api.md` — authentication routes: register, login, current-user
-- `projects-api.md` — project routes: listing, create, update, delete
+- `projects-api.md` — project routes: listing, get-by-id, create, update, delete
+- `feature-requests-api.md` — feature request routes: listing, create, update, status, delete,
+  voting

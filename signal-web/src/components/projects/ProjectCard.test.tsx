@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import * as authContext from "@/context/AuthContext"
@@ -76,5 +76,22 @@ describe("ProjectCard", () => {
     await userEvent.click(deleteButtons[deleteButtons.length - 1])
 
     expect(api.deleteProject).toHaveBeenCalledWith("p1")
+  })
+
+  it("navigates to the project page when the card body is clicked", async () => {
+    mockUser("someone-else")
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/"]}>
+          <Routes>
+            <Route path="/" element={<ProjectCard project={project} />} />
+            <Route path="/projects/:id" element={<div>project page</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    await userEvent.click(screen.getByText("Signal"))
+    expect(await screen.findByText("project page")).toBeInTheDocument()
   })
 })

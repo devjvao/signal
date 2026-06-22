@@ -28,7 +28,7 @@ func corsMiddleware(allowedOrigin string) gin.HandlerFunc {
 	}
 }
 
-func setupRouter(authHandler *handlers.AuthHandler, projectHandler *handlers.ProjectHandler, webOrigin string) *gin.Engine {
+func setupRouter(authHandler *handlers.AuthHandler, projectHandler *handlers.ProjectHandler, featureRequestHandler *handlers.FeatureRequestHandler, webOrigin string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware(webOrigin))
@@ -52,9 +52,20 @@ func setupRouter(authHandler *handlers.AuthHandler, projectHandler *handlers.Pro
 	protectedProjects.Use(auth.Middleware(authHandler.JWTSecret))
 	protectedProjects.GET("", projectHandler.List)
 	protectedProjects.GET("/mine", projectHandler.ListMine)
+	protectedProjects.GET("/:id", projectHandler.Get)
 	protectedProjects.POST("", projectHandler.Create)
 	protectedProjects.PUT("/:id", projectHandler.Update)
 	protectedProjects.DELETE("/:id", projectHandler.Delete)
+	protectedProjects.GET("/:id/feature-requests", featureRequestHandler.List)
+	protectedProjects.POST("/:id/feature-requests", featureRequestHandler.Create)
+
+	protectedFeatureRequests := r.Group("/feature-requests")
+	protectedFeatureRequests.Use(auth.Middleware(authHandler.JWTSecret))
+	protectedFeatureRequests.PUT("/:id", featureRequestHandler.Update)
+	protectedFeatureRequests.PUT("/:id/status", featureRequestHandler.UpdateStatus)
+	protectedFeatureRequests.DELETE("/:id", featureRequestHandler.Delete)
+	protectedFeatureRequests.POST("/:id/vote", featureRequestHandler.Vote)
+	protectedFeatureRequests.DELETE("/:id/vote", featureRequestHandler.Unvote)
 
 	return r
 }
@@ -85,7 +96,11 @@ func main() {
 		Queries: db.New(pool),
 	}
 
-	r := setupRouter(authHandler, projectHandler, cfg.WebOrigin)
+	featureRequestHandler := &handlers.FeatureRequestHandler{
+		Queries: db.New(pool),
+	}
+
+	r := setupRouter(authHandler, projectHandler, featureRequestHandler, cfg.WebOrigin)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatal(err)
 	}

@@ -60,3 +60,41 @@ Example:
 ```
 
 Soft-deleted projects (`deleted_at IS NOT NULL`) are excluded from all lookups and listings.
+
+## FeatureRequest
+
+The publicly-serialized shape of a feature request, including denormalized author name and
+viewer-relative vote fields so listing clients don't need separate lookups.
+
+| Field            | Type           | Notes                                                             |
+|------------------|----------------|--------------------------------------------------------------------|
+| `id`             | string         | UUID, primary key                                                  |
+| `projectId`      | string         | UUID of the parent project                                        |
+| `title`          | string         | required, non-empty, max 200                                      |
+| `description`    | string \| null | optional, max 2000                                                 |
+| `status`         | string         | one of `open`, `planned`, `in_progress`, `completed`, `rejected`   |
+| `createdBy`      | string         | UUID of the author                                                 |
+| `createdByName`  | string         | display name of the author, joined from `users`                   |
+| `upvoteCount`    | number         | count of active (non-deleted) votes                                |
+| `viewerHasVoted` | boolean        | whether the authenticated user has an active vote on this request |
+| `createdAt`      | string         | ISO 8601 timestamp, e.g. `2026-06-21T12:00:00Z`                    |
+
+Example:
+
+```json
+{
+  "id": "d5e3f4a2-3c4d-6e5f-1a0b-9c8d7e6f5a4b",
+  "projectId": "c4f2d3e1-2b3c-5d4e-0f9a-8b7c6d5e4f3a",
+  "title": "Dark mode",
+  "description": "Add a dark color scheme",
+  "status": "open",
+  "createdBy": "b3f1c2e0-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
+  "createdByName": "Ada Lovelace",
+  "upvoteCount": 3,
+  "viewerHasVoted": false,
+  "createdAt": "2026-06-21T12:00:00Z"
+}
+```
+
+Soft-deleted feature requests (`deleted_at IS NOT NULL`) are excluded from all lookups and listings.
+`upvoteCount` only counts votes where `deleted_at IS NULL`.

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { ApiError, clearToken, createProject, deleteProject, getMe, getToken, listMyProjects, listProjects, login, register, setToken, updateProject } from "./api"
+import { ApiError, clearToken, createFeatureRequest, createProject, deleteFeatureRequest, deleteProject, getMe, getProject, getToken, listFeatureRequests, listMyProjects, listProjects, login, register, setToken, unvoteFeatureRequest, updateFeatureRequest, updateFeatureRequestStatus, updateProject, voteFeatureRequest } from "./api"
 
 const originalFetch = globalThis.fetch
 
@@ -173,5 +173,111 @@ describe("deleteProject", () => {
     const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(url).toContain("/projects/1")
     expect(options?.method).toBe("DELETE")
+  })
+})
+
+describe("getProject", () => {
+  it("requests /projects/:id and returns the project", async () => {
+    const project = { id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { project }))
+
+    const result = await getProject("1")
+
+    expect(result.project).toEqual(project)
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects/1")
+  })
+})
+
+describe("listFeatureRequests", () => {
+  it("requests the project's feature requests with cursor and limit", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { featureRequests: [], nextCursor: null }))
+
+    await listFeatureRequests("p1", { cursor: "abc", limit: 5 })
+
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects/p1/feature-requests")
+    expect(url).toContain("cursor=abc")
+    expect(url).toContain("limit=5")
+  })
+})
+
+describe("createFeatureRequest", () => {
+  it("posts to the project's feature-requests collection", async () => {
+    const featureRequest = { id: "f1", projectId: "p1", title: "Dark mode", description: null, status: "open", createdBy: "u1", createdByName: "Ada", upvoteCount: 0, viewerHasVoted: false, createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(201, { featureRequest }))
+
+    const result = await createFeatureRequest("p1", { title: "Dark mode" })
+
+    expect(result.featureRequest).toEqual(featureRequest)
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects/p1/feature-requests")
+    expect(options?.method).toBe("POST")
+    expect(JSON.parse(options?.body as string)).toEqual({ title: "Dark mode" })
+  })
+})
+
+describe("updateFeatureRequest", () => {
+  it("puts to /feature-requests/:id", async () => {
+    const featureRequest = { id: "f1", projectId: "p1", title: "New", description: null, status: "open", createdBy: "u1", createdByName: "Ada", upvoteCount: 0, viewerHasVoted: false, createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { featureRequest }))
+
+    await updateFeatureRequest("f1", { title: "New" })
+
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/feature-requests/f1")
+    expect(options?.method).toBe("PUT")
+  })
+})
+
+describe("deleteFeatureRequest", () => {
+  it("sends DELETE to /feature-requests/:id", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(204, undefined))
+
+    await deleteFeatureRequest("f1")
+
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/feature-requests/f1")
+    expect(options?.method).toBe("DELETE")
+  })
+})
+
+describe("vote and unvote", () => {
+  it("posts to the vote subresource", async () => {
+    const featureRequest = { id: "f1", projectId: "p1", title: "x", description: null, status: "open", createdBy: "u1", createdByName: "Ada", upvoteCount: 1, viewerHasVoted: true, createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { featureRequest }))
+
+    const result = await voteFeatureRequest("f1")
+
+    expect(result.featureRequest.viewerHasVoted).toBe(true)
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/feature-requests/f1/vote")
+    expect(options?.method).toBe("POST")
+  })
+
+  it("sends DELETE to the vote subresource", async () => {
+    const featureRequest = { id: "f1", projectId: "p1", title: "x", description: null, status: "open", createdBy: "u1", createdByName: "Ada", upvoteCount: 0, viewerHasVoted: false, createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { featureRequest }))
+
+    await unvoteFeatureRequest("f1")
+
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/feature-requests/f1/vote")
+    expect(options?.method).toBe("DELETE")
+  })
+})
+
+describe("updateFeatureRequestStatus", () => {
+  it("puts the new status to /feature-requests/:id/status", async () => {
+    const featureRequest = { id: "f1", projectId: "p1", title: "x", description: null, status: "planned", createdBy: "u1", createdByName: "Ada", upvoteCount: 0, viewerHasVoted: false, createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { featureRequest }))
+
+    const result = await updateFeatureRequestStatus("f1", "planned")
+
+    expect(result.featureRequest.status).toBe("planned")
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/feature-requests/f1/status")
+    expect(options?.method).toBe("PUT")
+    expect(JSON.parse(options?.body as string)).toEqual({ status: "planned" })
   })
 })

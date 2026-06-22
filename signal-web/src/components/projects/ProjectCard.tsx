@@ -16,7 +16,18 @@ export function ProjectCard({ project }: ProjectCardProps) {
   const isOwner = user?.id === project.ownerId
 
   return (
-    <div className="rounded-md border border-border bg-background p-4">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => navigate(`/projects/${project.id}`)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          navigate(`/projects/${project.id}`)
+        }
+      }}
+      className="cursor-pointer rounded-md border border-border bg-background p-4 text-left"
+    >
       <h3 className="font-display text-lg font-semibold">{project.name}</h3>
       {project.description && (
         <p className="mt-1 text-sm text-muted-foreground">{project.description}</p>
@@ -25,7 +36,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
         {project.ownerName} &middot; {createdAt}
       </p>
       {isOwner && (
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex gap-2" onClick={(event) => event.stopPropagation()}>
           <Button
             variant="outline"
             size="sm"

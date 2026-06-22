@@ -58,6 +58,43 @@ Protected — requires `Authorization: Bearer <token>`.
 Same query params, response shape, and error responses as `GET /projects`, but scoped to projects
 owned by the authenticated user (the token's `sub` claim).
 
+## GET /projects/:id
+
+Protected — requires `Authorization: Bearer <token>`.
+
+Returns a single active project by id.
+
+**Success response — `200 OK`:**
+
+```json
+{
+  "project": {
+    "id": "c4f2d3e1-2b3c-5d4e-0f9a-8b7c6d5e4f3a",
+    "name": "Signal",
+    "slug": "signal",
+    "description": "A feedback aggregator",
+    "ownerId": "b3f1c2e0-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
+    "ownerName": "Ada Lovelace",
+    "createdAt": "2026-06-21T12:00:00Z"
+  }
+}
+```
+
+**Error responses:**
+
+- `400 Bad Request` — `:id` is not a valid UUID:
+  ```json
+  { "error": "invalid project id" }
+  ```
+- `401 Unauthorized` — missing/invalid/expired token:
+  ```json
+  { "error": "unauthorized" }
+  ```
+- `404 Not Found` — no active project with that id:
+  ```json
+  { "error": "project not found" }
+  ```
+
 ## POST /projects
 
 Protected — requires `Authorization: Bearer <token>`. The authenticated user becomes the project's

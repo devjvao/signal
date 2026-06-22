@@ -19,7 +19,8 @@ func TestHealthEndpoint(t *testing.T) {
 		JWTSecret: []byte("test-secret"),
 	}
 	projectHandler := &handlers.ProjectHandler{Queries: db.New(nil)}
-	r := setupRouter(authHandler, projectHandler, "http://localhost:5173")
+	featureRequestHandler := &handlers.FeatureRequestHandler{Queries: db.New(nil)}
+	r := setupRouter(authHandler, projectHandler, featureRequestHandler, "http://localhost:5173")
 
 	w := httptest.NewRecorder()
 	req, err := http.NewRequest(http.MethodGet, "/health", nil)
