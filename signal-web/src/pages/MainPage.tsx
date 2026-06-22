@@ -1,7 +1,9 @@
 import { useNavigate } from "react-router-dom"
 
 import { Logo } from "@/components/brand/logo"
+import { ProjectList } from "@/components/projects/ProjectList"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/context/AuthContext"
 
 export default function MainPage() {
@@ -28,9 +30,19 @@ export default function MainPage() {
           </div>
         )}
       </header>
-      <main className="flex flex-1 flex-col items-center justify-center gap-4">
-        <h1 className="font-display text-4xl font-extrabold tracking-tight">Signal</h1>
-        <Button>Get Started</Button>
+      <main className="flex flex-1 flex-col gap-6 px-6 py-8">
+        <Tabs defaultValue="all">
+          <TabsList>
+            <TabsTrigger value="all">All projects</TabsTrigger>
+            <TabsTrigger value="mine">My projects</TabsTrigger>
+          </TabsList>
+          <TabsContent value="all">
+            <ProjectList scope="all" />
+          </TabsContent>
+          <TabsContent value="mine">
+            <ProjectList scope="mine" />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   )

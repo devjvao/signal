@@ -79,3 +79,39 @@ export function login(
 export function getMe(): Promise<{ user: User }> {
   return request<{ user: User }>("/auth/me")
 }
+
+export interface Project {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  ownerId: string
+  ownerName: string
+  createdAt: string
+}
+
+export interface ProjectsPage {
+  projects: Project[]
+  nextCursor: string | null
+}
+
+interface ProjectsPageParams {
+  cursor?: string
+  limit?: number
+}
+
+function projectsQueryString(params: ProjectsPageParams): string {
+  const search = new URLSearchParams()
+  if (params.cursor) search.set("cursor", params.cursor)
+  if (params.limit !== undefined) search.set("limit", String(params.limit))
+  const query = search.toString()
+  return query ? `?${query}` : ""
+}
+
+export function listProjects(params: ProjectsPageParams = {}): Promise<ProjectsPage> {
+  return request<ProjectsPage>(`/projects${projectsQueryString(params)}`)
+}
+
+export function listMyProjects(params: ProjectsPageParams = {}): Promise<ProjectsPage> {
+  return request<ProjectsPage>(`/projects/mine${projectsQueryString(params)}`)
+}

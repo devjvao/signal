@@ -32,5 +32,6 @@ a starting draft.
 
 ## Files
 
-- `entities.md` — shared data shapes (e.g. the User entity)
+- `entities.md` — shared data shapes (e.g. the User and Project entities)
 - `auth-api.md` — authentication routes: register, login, current-user
+- `projects-api.md` — project listing routes: all projects, current user's projects
