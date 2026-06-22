@@ -24,9 +24,13 @@ a starting draft.
 
 - **Status codes used in this feature:**
   - `200 OK` — successful login or read
-  - `201 Created` — successful registration
-  - `400 Bad Request` — request body failed validation (missing/malformed fields)
+  - `201 Created` — successful registration or project creation
+  - `204 No Content` — successful project deletion
+  - `400 Bad Request` — request body failed validation (missing/malformed fields), or a malformed
+    path parameter (e.g. an invalid project id)
   - `401 Unauthorized` — bad login credentials, or a missing/malformed/invalid/expired token
+  - `403 Forbidden` — authenticated user is not the resource's owner
+  - `404 Not Found` — no active resource with that id
   - `409 Conflict` — registration with an email that's already registered
   - `500 Internal Server Error` — unexpected server error
 
@@ -34,4 +38,4 @@ a starting draft.
 
 - `entities.md` — shared data shapes (e.g. the User and Project entities)
 - `auth-api.md` — authentication routes: register, login, current-user
-- `projects-api.md` — project listing routes: all projects, current user's projects
+- `projects-api.md` — project routes: listing, create, update, delete

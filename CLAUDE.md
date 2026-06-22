@@ -2,34 +2,32 @@
 
 ## Prompt Logging
 
-Scope: this applies only to prompts the human user sends directly in the main/controller session. Do not apply it
-inside dispatched subagents (e.g. via the Agent/Task tool, or the superpowers subagent-driven-development /
-executing-plans skills) — a subagent's dispatch instructions are not a new user prompt, and subagents logging their
-own task briefs pollutes this file with noise and out-of-order timestamps.
+**Scope:** Main/controller session only. Subagents dispatched via the Agent/Task tool or Superpowers skills (
+`/subagent-driven-development`, `/executing-plans`) MUST NOT write to or modify `prompts.txt` — their task briefs are
+not user prompts, and logging them pollutes the file with noise and out-of-order timestamps.
 
-**Subagents MUST NOT write to or modify `prompts.txt` under any circumstances. This is a hard rule with no exceptions.
-Only the main/controller agent is authorized to append entries to this file.**
+**This is a hard rule with no exceptions: only the main/controller agent may append to `prompts.txt`.**
 
-Every time the user sends a new instruction or prompt, append one entry to prompts.txt in the project root, in this
-format:
+After completing each user-initiated response, append one entry to `prompts.txt` in the project root:
 
 ```
-<ISO 8601 timestamp> | PROMPT: "<verbatim prompt text>" | SUMMARY: <brief summary of what you did in response>
+<ISO 8601 timestamp> | PROMPT: "<verbatim prompt text>" | SUMMARY: <brief summary of what you did>
 ```
 
-- Use the verbatim prompt text, not a paraphrase. Truncate only if extremely long, with a trailing `[...]`.
-- Use the real current timestamp (e.g. via `date -u +%Y-%m-%dT%H:%M:%SZ`) — never a placeholder.
-- Write one entry per user prompt, after the response is complete, so the summary reflects the full work done
-  (including any subagents dispatched along the way).
-- Create the file if it doesn't exist. Keep this log updated throughout all sessions, in chronological order.
+Rules:
+
+- Use verbatim prompt text. Truncate only if extremely long, with a trailing `[...]`.
+- Get the real timestamp via `date -u +%Y-%m-%dT%H:%M:%SZ` — never use a placeholder.
+- Write the entry **after** the response is complete so the summary reflects all work done, including any subagents
+  dispatched.
+- Create the file if it doesn't exist. Maintain strict chronological order across all sessions.
+
+---
 
 ## Commit Conventions
 
-All commits must follow the rules defined in:
-
-- `CONVENTIONAL_COMMIT_GUIDELINE.md`
-
-This file contains the full specification for:
+All commits must follow the rules defined in `CONVENTIONAL_COMMIT_GUIDELINE.md`, which is the single source of truth
+for:
 
 - Commit message format (Conventional Commits)
 - Allowed types and scopes
@@ -37,4 +35,4 @@ This file contains the full specification for:
 - Commit splitting strategy
 - Pull request description structure
 
-If any conflict exists between this file and inline instructions, `CONVENTIONAL_COMMIT_GUIDELINE.md` takes precedence.
+**`CONVENTIONAL_COMMIT_GUIDELINE.md` takes precedence over any inline instructions in case of conflict.**
