@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 
 	"signal-api/internal/auth"
 	"signal-api/internal/config"
@@ -32,6 +33,10 @@ func setupRouter(authHandler *handlers.AuthHandler, webOrigin string) *gin.Engin
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware(webOrigin))
 
+	if err := r.SetTrustedProxies(nil); err != nil {
+		panic("failed to set trusted proxies: " + err.Error())
+	}
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -47,6 +52,11 @@ func setupRouter(authHandler *handlers.AuthHandler, webOrigin string) *gin.Engin
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("No .env file found")
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
