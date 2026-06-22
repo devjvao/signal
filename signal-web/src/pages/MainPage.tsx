@@ -31,6 +31,9 @@ export default function MainPage() {
         )}
       </header>
       <main className="flex flex-1 flex-col gap-6 px-6 py-8">
+        <div className="flex justify-end">
+          <Button onClick={() => navigate("/projects/new")}>New project</Button>
+        </div>
         <Tabs defaultValue="all">
           <TabsList>
             <TabsTrigger value="all">All projects</TabsTrigger>

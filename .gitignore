@@ -24,3 +24,6 @@ Thumbs.db
 # Claude / superpowers local state
 .claude/
 .superpowers/
+
+# Git worktrees
+.worktrees/

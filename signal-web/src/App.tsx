@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import LoginPage from "@/pages/LoginPage"
 import MainPage from "@/pages/MainPage"
+import ProjectFormPage from "@/pages/ProjectFormPage"
 import RegisterPage from "@/pages/RegisterPage"
 
 export default function App() {
@@ -13,6 +14,22 @@ export default function App() {
         element={
           <ProtectedRoute>
             <MainPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/new"
+        element={
+          <ProtectedRoute>
+            <ProjectFormPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:id/edit"
+        element={
+          <ProtectedRoute>
+            <ProjectFormPage />
           </ProtectedRoute>
         }
       />

@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
 import * as authContext from "@/context/AuthContext"
@@ -50,5 +50,23 @@ describe("MainPage", () => {
 
     await userEvent.click(screen.getByText("My projects"))
     expect(screen.getByText("ProjectList:mine")).toBeInTheDocument()
+  })
+})
+
+describe("MainPage New project button", () => {
+  it("navigates to /projects/new when clicked", async () => {
+    mockAuthenticated()
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<MainPage />} />
+          <Route path="/projects/new" element={<div>new project page</div>} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await userEvent.click(screen.getByText("New project"))
+    expect(await screen.findByText("new project page")).toBeInTheDocument()
   })
 })

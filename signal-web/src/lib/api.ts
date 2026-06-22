@@ -115,3 +115,26 @@ export function listProjects(params: ProjectsPageParams = {}): Promise<ProjectsP
 export function listMyProjects(params: ProjectsPageParams = {}): Promise<ProjectsPage> {
   return request<ProjectsPage>(`/projects/mine${projectsQueryString(params)}`)
 }
+
+export interface ProjectInput {
+  name: string
+  description?: string
+}
+
+export function createProject(input: ProjectInput): Promise<{ project: Project }> {
+  return request<{ project: Project }>("/projects", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateProject(id: string, input: ProjectInput): Promise<{ project: Project }> {
+  return request<{ project: Project }>(`/projects/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteProject(id: string): Promise<void> {
+  return request<void>(`/projects/${id}`, { method: "DELETE" })
+}
