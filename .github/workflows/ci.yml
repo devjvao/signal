@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  signal-api:
+    name: signal-api
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: signal-api
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: signal
+          POSTGRES_PASSWORD: signal
+          POSTGRES_DB: signal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signal"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_URL: postgres://signal:signal@localhost:5432/signal?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: signal-api/go.mod
+          cache-dependency-path: signal-api/go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Install migrate CLI
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1
+
+      - name: Run database migrations
+        run: migrate -path db/migrations -database "$DB_URL" up
+
+      - name: Test
+        run: go test ./... -v
+
+  signal-web:
+    name: signal-web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: signal-web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: signal-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
