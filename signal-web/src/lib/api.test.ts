@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { ApiError, clearToken, getMe, getToken, login, register, setToken } from "./api"
+import { ApiError, clearToken, getMe, getToken, listMyProjects, listProjects, login, register, setToken } from "./api"
 
 const originalFetch = globalThis.fetch
 
@@ -89,5 +89,47 @@ describe("getMe", () => {
     const [, options] = vi.mocked(globalThis.fetch).mock.calls[0]
     const headers = options?.headers as Record<string, string>
     expect(headers["Authorization"]).toBe("Bearer stored-token")
+  })
+})
+
+describe("listProjects", () => {
+  it("requests /projects with no query string by default", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { projects: [], nextCursor: null }))
+
+    await listProjects()
+
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects")
+    expect(url).not.toContain("?")
+  })
+
+  it("includes cursor and limit when provided", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { projects: [], nextCursor: null }))
+
+    await listProjects({ cursor: "abc", limit: 5 })
+
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("cursor=abc")
+    expect(url).toContain("limit=5")
+  })
+
+  it("returns the parsed projects page", async () => {
+    const page = { projects: [{ id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }], nextCursor: "next" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, page))
+
+    const result = await listProjects()
+
+    expect(result).toEqual(page)
+  })
+})
+
+describe("listMyProjects", () => {
+  it("requests /projects/mine", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { projects: [], nextCursor: null }))
+
+    await listMyProjects()
+
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects/mine")
   })
 })

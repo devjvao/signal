@@ -28,7 +28,7 @@ func corsMiddleware(allowedOrigin string) gin.HandlerFunc {
 	}
 }
 
-func setupRouter(authHandler *handlers.AuthHandler, webOrigin string) *gin.Engine {
+func setupRouter(authHandler *handlers.AuthHandler, projectHandler *handlers.ProjectHandler, webOrigin string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware(webOrigin))
@@ -44,9 +44,14 @@ func setupRouter(authHandler *handlers.AuthHandler, webOrigin string) *gin.Engin
 	r.POST("/auth/register", authHandler.Register)
 	r.POST("/auth/login", authHandler.Login)
 
-	protected := r.Group("/auth")
-	protected.Use(auth.Middleware(authHandler.JWTSecret))
-	protected.GET("/me", authHandler.Me)
+	protectedAuth := r.Group("/auth")
+	protectedAuth.Use(auth.Middleware(authHandler.JWTSecret))
+	protectedAuth.GET("/me", authHandler.Me)
+
+	protectedProjects := r.Group("/projects")
+	protectedProjects.Use(auth.Middleware(authHandler.JWTSecret))
+	protectedProjects.GET("", projectHandler.List)
+	protectedProjects.GET("/mine", projectHandler.ListMine)
 
 	return r
 }
@@ -73,7 +78,11 @@ func main() {
 		JWTSecret: []byte(cfg.JWTSecret),
 	}
 
-	r := setupRouter(authHandler, cfg.WebOrigin)
+	projectHandler := &handlers.ProjectHandler{
+		Queries: db.New(pool),
+	}
+
+	r := setupRouter(authHandler, projectHandler, cfg.WebOrigin)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatal(err)
 	}
