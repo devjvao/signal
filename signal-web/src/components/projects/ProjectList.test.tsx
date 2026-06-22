@@ -1,10 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import * as authContext from "@/context/AuthContext"
 import * as api from "@/lib/api"
 import { ProjectList } from "./ProjectList"
+
+vi.mock("@/context/AuthContext", async () => {
+  const actual = await vi.importActual<typeof import("@/context/AuthContext")>("@/context/AuthContext")
+  return { ...actual, useAuth: vi.fn() }
+})
 
 let intersectionCallback: ((entries: { isIntersecting: boolean }[]) => void) | null = null
 
@@ -19,6 +26,13 @@ class MockIntersectionObserver {
 beforeEach(() => {
   intersectionCallback = null
   vi.stubGlobal("IntersectionObserver", MockIntersectionObserver)
+  vi.mocked(authContext.useAuth).mockReturnValue({
+    status: "authenticated",
+    user: { id: "viewer-1", name: "Viewer", email: "viewer@example.com", createdAt: "2026-06-21T00:00:00Z" },
+    login: vi.fn(),
+    register: vi.fn(),
+    logout: vi.fn(),
+  })
 })
 
 afterEach(() => {
@@ -28,7 +42,11 @@ afterEach(() => {
 
 function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient()
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>
+  )
 }
 
 function project(id: string) {

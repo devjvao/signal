@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,5 +265,370 @@ func TestList_ExcludesSoftDeleted(t *testing.T) {
 		if p.ID == deletedID {
 			t.Fatalf("soft-deleted project %s should not appear in listing", deletedID)
 		}
+	}
+}
+
+func TestCreate_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.POST("", h.Create)
+
+	body := strings.NewReader(`{"name":"My Project","description":"A test project"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Project struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Slug        string `json:"slug"`
+			Description string `json:"description"`
+			OwnerID     string `json:"ownerId"`
+			OwnerName   string `json:"ownerName"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Project.Slug != "my-project" {
+		t.Errorf("expected slug 'my-project', got %q", resp.Project.Slug)
+	}
+	if resp.Project.Description != "A test project" {
+		t.Errorf("expected description 'A test project', got %q", resp.Project.Description)
+	}
+	if resp.Project.OwnerID != ownerID || resp.Project.OwnerName != "Ada Lovelace" {
+		t.Errorf("expected owner %s (Ada Lovelace), got %s (%s)", ownerID, resp.Project.OwnerID, resp.Project.OwnerName)
+	}
+}
+
+func TestCreate_SlugCollision(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	seedProject(t, pool, ownerID, "My Project", "my-project", time.Now())
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.POST("", h.Create)
+
+	body := strings.NewReader(`{"name":"My Project"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Project struct {
+			Slug string `json:"slug"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Project.Slug == "my-project" {
+		t.Fatal("expected a different slug on collision, got the same one")
+	}
+	if !strings.HasPrefix(resp.Project.Slug, "my-project-") {
+		t.Errorf("expected slug to start with 'my-project-', got %q", resp.Project.Slug)
+	}
+}
+
+func TestCreate_MissingName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.POST("", h.Create)
+
+	body := strings.NewReader(`{"description":"missing a name"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreate_Unauthorized(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := setupTestProjectHandler(t)
+	secret := []byte("test-secret")
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.POST("", h.Create)
+
+	body := strings.NewReader(`{"name":"My Project"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdate_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	projectID := seedProject(t, pool, ownerID, "Old Name", "old-name", time.Now())
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.PUT("/:id", h.Update)
+
+	body := strings.NewReader(`{"name":"New Name","description":"Updated"}`)
+	req := httptest.NewRequest(http.MethodPut, "/projects/"+projectID, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Project struct {
+			Name        string `json:"name"`
+			Slug        string `json:"slug"`
+			Description string `json:"description"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Project.Name != "New Name" || resp.Project.Description != "Updated" {
+		t.Errorf("expected updated name/description, got %+v", resp.Project)
+	}
+	if resp.Project.Slug != "old-name" {
+		t.Errorf("expected slug to stay 'old-name', got %q", resp.Project.Slug)
+	}
+}
+
+func TestUpdate_ForbiddenForNonOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	otherID := seedUser(t, pool, "Grace Hopper", "grace@example.com")
+	projectID := seedProject(t, pool, ownerID, "Old Name", "old-name", time.Now())
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, otherID, "grace@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.PUT("/:id", h.Update)
+
+	body := strings.NewReader(`{"name":"Hijacked"}`)
+	req := httptest.NewRequest(http.MethodPut, "/projects/"+projectID, body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdate_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.PUT("/:id", h.Update)
+
+	body := strings.NewReader(`{"name":"Anything"}`)
+	req := httptest.NewRequest(http.MethodPut, "/projects/00000000-0000-0000-0000-000000000000", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdate_InvalidID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.PUT("/:id", h.Update)
+
+	body := strings.NewReader(`{"name":"Anything"}`)
+	req := httptest.NewRequest(http.MethodPut, "/projects/not-a-uuid", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDelete_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	projectID := seedProject(t, pool, ownerID, "Doomed", "doomed", time.Now())
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.DELETE("/:id", h.Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/projects/"+projectID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var deletedAt *time.Time
+	if err := pool.QueryRow(context.Background(), "SELECT deleted_at FROM projects WHERE id = $1", projectID).Scan(&deletedAt); err != nil {
+		t.Fatalf("failed to query project: %v", err)
+	}
+	if deletedAt == nil {
+		t.Error("expected deleted_at to be set")
+	}
+}
+
+func TestDelete_ForbiddenForNonOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	otherID := seedUser(t, pool, "Grace Hopper", "grace@example.com")
+	projectID := seedProject(t, pool, ownerID, "Protected", "protected", time.Now())
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, otherID, "grace@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.DELETE("/:id", h.Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/projects/"+projectID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDelete_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.DELETE("/:id", h.Delete)
+
+	req := httptest.NewRequest(http.MethodDelete, "/projects/00000000-0000-0000-0000-000000000000", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", w.Code, w.Body.String())
 	}
 }

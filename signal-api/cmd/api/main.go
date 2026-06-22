@@ -18,7 +18,7 @@ import (
 func corsMiddleware(allowedOrigin string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", allowedOrigin)
-		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
@@ -52,6 +52,9 @@ func setupRouter(authHandler *handlers.AuthHandler, projectHandler *handlers.Pro
 	protectedProjects.Use(auth.Middleware(authHandler.JWTSecret))
 	protectedProjects.GET("", projectHandler.List)
 	protectedProjects.GET("/mine", projectHandler.ListMine)
+	protectedProjects.POST("", projectHandler.Create)
+	protectedProjects.PUT("/:id", projectHandler.Update)
+	protectedProjects.DELETE("/:id", projectHandler.Delete)
 
 	return r
 }

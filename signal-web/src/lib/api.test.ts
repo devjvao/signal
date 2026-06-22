@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { ApiError, clearToken, getMe, getToken, listMyProjects, listProjects, login, register, setToken } from "./api"
+import { ApiError, clearToken, createProject, deleteProject, getMe, getToken, listMyProjects, listProjects, login, register, setToken, updateProject } from "./api"
 
 const originalFetch = globalThis.fetch
 
@@ -131,5 +131,47 @@ describe("listMyProjects", () => {
 
     const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
     expect(url).toContain("/projects/mine")
+  })
+})
+
+describe("createProject", () => {
+  it("posts to /projects and returns the created project", async () => {
+    const project = { id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(201, { project }))
+
+    const result = await createProject({ name: "Signal", description: "A product" })
+
+    expect(result.project).toEqual(project)
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects")
+    expect(options?.method).toBe("POST")
+    expect(JSON.parse(options?.body as string)).toEqual({ name: "Signal", description: "A product" })
+  })
+})
+
+describe("updateProject", () => {
+  it("puts to /projects/:id and returns the updated project", async () => {
+    const project = { id: "1", name: "Signal v2", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { project }))
+
+    const result = await updateProject("1", { name: "Signal v2" })
+
+    expect(result.project).toEqual(project)
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects/1")
+    expect(options?.method).toBe("PUT")
+    expect(JSON.parse(options?.body as string)).toEqual({ name: "Signal v2" })
+  })
+})
+
+describe("deleteProject", () => {
+  it("sends a DELETE request to /projects/:id", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(204, undefined))
+
+    await deleteProject("1")
+
+    const [url, options] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("/projects/1")
+    expect(options?.method).toBe("DELETE")
   })
 })

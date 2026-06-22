@@ -11,6 +11,79 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createProject = `-- name: CreateProject :one
+INSERT INTO projects (owner_id, name, slug, description)
+VALUES ($1, $2, $3, $4)
+RETURNING id, owner_id, name, slug, description, created_at
+`
+
+type CreateProjectParams struct {
+	OwnerID     string
+	Name        string
+	Slug        string
+	Description pgtype.Text
+}
+
+type CreateProjectRow struct {
+	ID          string
+	OwnerID     string
+	Name        string
+	Slug        string
+	Description pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (CreateProjectRow, error) {
+	row := q.db.QueryRow(ctx, createProject,
+		arg.OwnerID,
+		arg.Name,
+		arg.Slug,
+		arg.Description,
+	)
+	var i CreateProjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getProjectByID = `-- name: GetProjectByID :one
+SELECT p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, u.name AS owner_name
+FROM projects p
+JOIN users u ON u.id = p.owner_id
+WHERE p.id = $1::uuid AND p.deleted_at IS NULL
+`
+
+type GetProjectByIDRow struct {
+	ID          string
+	OwnerID     string
+	Name        string
+	Slug        string
+	Description pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+	OwnerName   string
+}
+
+func (q *Queries) GetProjectByID(ctx context.Context, id string) (GetProjectByIDRow, error) {
+	row := q.db.QueryRow(ctx, getProjectByID, id)
+	var i GetProjectByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Description,
+		&i.CreatedAt,
+		&i.OwnerName,
+	)
+	return i, err
+}
+
 const listProjects = `-- name: ListProjects :many
 SELECT
     p.id,
@@ -154,4 +227,51 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, arg ListProjectsByOwn
 		return nil, err
 	}
 	return items, nil
+}
+
+const softDeleteProject = `-- name: SoftDeleteProject :exec
+UPDATE projects
+SET deleted_at = now()
+WHERE id = $1::uuid AND deleted_at IS NULL
+`
+
+func (q *Queries) SoftDeleteProject(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, softDeleteProject, id)
+	return err
+}
+
+const updateProject = `-- name: UpdateProject :one
+UPDATE projects
+SET name = $1, description = $2
+WHERE id = $3::uuid AND deleted_at IS NULL
+RETURNING id, owner_id, name, slug, description, created_at
+`
+
+type UpdateProjectParams struct {
+	Name        string
+	Description pgtype.Text
+	ID          string
+}
+
+type UpdateProjectRow struct {
+	ID          string
+	OwnerID     string
+	Name        string
+	Slug        string
+	Description pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (UpdateProjectRow, error) {
+	row := q.db.QueryRow(ctx, updateProject, arg.Name, arg.Description, arg.ID)
+	var i UpdateProjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Slug,
+		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
 }
