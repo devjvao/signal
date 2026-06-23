@@ -10,15 +10,26 @@ relative to the authenticated user making the request.
 
 ## GET /projects/:id/feature-requests
 
-Returns a project's non-deleted feature requests, ordered by `upvoteCount` descending, then
-`createdAt` descending, then `id` descending (most-upvoted first; ties broken by newest first).
+Returns a project's non-deleted feature requests.
 
 **Query params:**
 
 - `cursor` (optional) — opaque string from a previous response's `nextCursor`. Omit for the first
-  page. Clients must treat this as opaque and pass back exactly what they were given.
+  page. Clients must treat this as opaque and pass back exactly what they were given. A cursor is
+  only valid for the `sort` mode it was issued under — changing `sort` or `status` requires
+  restarting pagination without a cursor.
 - `limit` (optional) — page size. Default `10`, max `50`. Values outside `1..50`, or non-integer
   values, are a `400`.
+- `status` (optional) — one of `open`, `planned`, `in_progress`, `completed`, `rejected`. Filters
+  to feature requests with that status. Omit to return all statuses. Any other value is a `400`.
+- `sort` (optional) — one of:
+  - `votes` (default) — `upvoteCount` descending, then `createdAt` descending, then `id`
+    descending (most-upvoted first; ties broken by newest first). Because `upvoteCount` is
+    mutable, results can shift across pages if votes change while a client is paginating. This is
+    a known, accepted tradeoff.
+  - `newest` — `createdAt` descending, then `id` descending.
+
+  Any other value is a `400`.
 
 **Success response — `200 OK`:**
 
@@ -44,9 +55,6 @@ Returns a project's non-deleted feature requests, ordered by `upvoteCount` desce
 
 `nextCursor` is `null` when there are no more pages.
 
-Because `upvoteCount` is mutable, results can shift across pages if votes change while a client is
-paginating. This is a known, accepted tradeoff.
-
 **Error responses:**
 
 - `400 Bad Request`:
@@ -58,6 +66,12 @@ paginating. This is a known, accepted tradeoff.
   ```
   ```json
   { "error": "invalid limit" }
+  ```
+  ```json
+  { "error": "invalid status" }
+  ```
+  ```json
+  { "error": "invalid sort" }
   ```
 - `401 Unauthorized` — missing/invalid/expired token:
   ```json

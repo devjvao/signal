@@ -35,15 +35,17 @@ These exist in the database but must never appear in any API response:
 The publicly-serialized shape of a project, including a denormalized owner name so listing
 clients don't need a separate lookup.
 
-| Field         | Type             | Notes                                              |
-|---------------|------------------|-----------------------------------------------------|
-| `id`          | string           | UUID, primary key                                  |
-| `name`        | string           | required, non-empty                                |
-| `slug`        | string           | unique among active (non-deleted) projects         |
-| `description` | string \| null   | optional                                           |
-| `ownerId`     | string           | UUID of the owning user                            |
-| `ownerName`   | string           | display name of the owner, joined from `users`     |
-| `createdAt`   | string           | ISO 8601 timestamp, e.g. `2026-06-21T12:00:00Z`    |
+| Field          | Type             | Notes                                                       |
+|----------------|------------------|---------------------------------------------------------------|
+| `id`           | string           | UUID, primary key                                           |
+| `name`         | string           | required, non-empty                                         |
+| `slug`         | string           | unique among active (non-deleted) projects                  |
+| `description`  | string \| null   | optional                                                    |
+| `ownerId`      | string           | UUID of the owning user                                     |
+| `ownerName`    | string           | display name of the owner, joined from `users`              |
+| `requestCount` | number           | count of active (non-deleted) feature requests on the project |
+| `voteCount`    | number           | count of active (non-deleted) votes across the project's feature requests |
+| `createdAt`    | string           | ISO 8601 timestamp, e.g. `2026-06-21T12:00:00Z`             |
 
 Example:
 
@@ -55,6 +57,8 @@ Example:
   "description": "A feedback aggregator",
   "ownerId": "b3f1c2e0-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
   "ownerName": "Ada Lovelace",
+  "requestCount": 4,
+  "voteCount": 11,
   "createdAt": "2026-06-21T12:00:00Z"
 }
 ```

@@ -7,14 +7,24 @@ throughout this document. See `entities.md` for the `Project` shape referenced b
 
 Protected — requires `Authorization: Bearer <token>`.
 
-Returns all non-deleted projects across all users, newest first (`createdAt` descending).
+Returns all non-deleted projects across all users.
 
 **Query params:**
 
 - `cursor` (optional) — opaque string from a previous response's `nextCursor`. Omit for the first
-  page. Clients must treat this as opaque and pass back exactly what they were given.
+  page. Clients must treat this as opaque and pass back exactly what they were given. A cursor is
+  only valid for the `sort` mode it was issued under — changing `sort` requires restarting
+  pagination without a cursor.
 - `limit` (optional) — page size. Default `10`, max `50`. Values outside `1..50`, or non-integer
   values, are a `400`.
+- `search` (optional) — case-insensitive substring match against `name`. Empty/omitted returns all
+  projects.
+- `sort` (optional) — one of:
+  - `newest` (default) — `createdAt` descending, then `id` descending.
+  - `active` — `requestCount + voteCount` descending, then `createdAt` descending, then `id`
+    descending.
+
+  Any other value is a `400`.
 
 **Success response — `200 OK`:**
 
@@ -28,6 +38,8 @@ Returns all non-deleted projects across all users, newest first (`createdAt` des
       "description": "A feedback aggregator",
       "ownerId": "b3f1c2e0-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
       "ownerName": "Ada Lovelace",
+      "requestCount": 4,
+      "voteCount": 11,
       "createdAt": "2026-06-21T12:00:00Z"
     }
   ],
@@ -45,6 +57,9 @@ Returns all non-deleted projects across all users, newest first (`createdAt` des
   ```
   ```json
   { "error": "invalid limit" }
+  ```
+  ```json
+  { "error": "invalid sort" }
   ```
 - `401 Unauthorized` — missing/invalid/expired token:
   ```json
@@ -75,6 +90,8 @@ Returns a single active project by id.
     "description": "A feedback aggregator",
     "ownerId": "b3f1c2e0-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
     "ownerName": "Ada Lovelace",
+    "requestCount": 4,
+    "voteCount": 11,
     "createdAt": "2026-06-21T12:00:00Z"
   }
 }
@@ -127,6 +144,8 @@ slug collides with an existing active project, a random suffix is appended and c
     "description": "A feedback aggregator",
     "ownerId": "b3f1c2e0-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
     "ownerName": "Ada Lovelace",
+    "requestCount": 0,
+    "voteCount": 0,
     "createdAt": "2026-06-21T12:00:00Z"
   }
 }
@@ -163,6 +182,8 @@ optional).
     "description": "A feedback aggregator",
     "ownerId": "b3f1c2e0-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
     "ownerName": "Ada Lovelace",
+    "requestCount": 4,
+    "voteCount": 11,
     "createdAt": "2026-06-21T12:00:00Z"
   }
 }

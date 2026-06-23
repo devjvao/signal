@@ -25,13 +25,15 @@ type ProjectHandler struct {
 }
 
 type projectResponse struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Slug        string  `json:"slug"`
-	Description *string `json:"description"`
-	OwnerID     string  `json:"ownerId"`
-	OwnerName   string  `json:"ownerName"`
-	CreatedAt   string  `json:"createdAt"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Slug         string  `json:"slug"`
+	Description  *string `json:"description"`
+	OwnerID      string  `json:"ownerId"`
+	OwnerName    string  `json:"ownerName"`
+	RequestCount int32   `json:"requestCount"`
+	VoteCount    int32   `json:"voteCount"`
+	CreatedAt    string  `json:"createdAt"`
 }
 
 type projectsListResponse struct {
@@ -88,20 +90,21 @@ func encodeProjectsCursor(createdAt time.Time, id string) string {
 	return base64.StdEncoding.EncodeToString([]byte(raw))
 }
 
-func newProjectResponse(id, ownerID, name, slug string, description pgtype.Text, createdAt pgtype.Timestamptz, ownerName string) projectResponse {
+func newProjectResponse(id, ownerID, name, slug string, description pgtype.Text, createdAt pgtype.Timestamptz, ownerName string, requestCount, voteCount int32) projectResponse {
 	var desc *string
 	if description.Valid {
-		d := description.String
-		desc = &d
+		desc = new(description.String)
 	}
 	return projectResponse{
-		ID:          id,
-		Name:        name,
-		Slug:        slug,
-		Description: desc,
-		OwnerID:     ownerID,
-		OwnerName:   ownerName,
-		CreatedAt:   createdAt.Time.UTC().Format(time.RFC3339),
+		ID:           id,
+		Name:         name,
+		Slug:         slug,
+		Description:  desc,
+		OwnerID:      ownerID,
+		OwnerName:    ownerName,
+		RequestCount: requestCount,
+		VoteCount:    voteCount,
+		CreatedAt:    createdAt.Time.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -117,45 +120,138 @@ func cursorParams(cursor *projectCursor) (hasCursor bool, createdAt pgtype.Times
 	return true, pgtype.Timestamptz{Time: cursor.createdAt, Valid: true}, cursor.id
 }
 
+func parseProjectsSort(c *gin.Context) (string, bool) {
+	raw := c.Query("sort")
+	if raw == "" {
+		return "newest", true
+	}
+	if raw == "newest" || raw == "active" {
+		return raw, true
+	}
+	return "", false
+}
+
+type projectActiveCursor struct {
+	score     int32
+	createdAt time.Time
+	id        string
+}
+
+func parseProjectActiveCursor(c *gin.Context) (*projectActiveCursor, bool) {
+	raw := c.Query("cursor")
+	if raw == "" {
+		return nil, true
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, false
+	}
+	parts := strings.SplitN(string(decoded), "|", 3)
+	if len(parts) != 3 || !uuidPattern.MatchString(parts[2]) {
+		return nil, false
+	}
+	score, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil, false
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, parts[1])
+	if err != nil {
+		return nil, false
+	}
+	return &projectActiveCursor{score: int32(score), createdAt: createdAt, id: parts[2]}, true
+}
+
+func encodeProjectActiveCursor(score int32, createdAt time.Time, id string) string {
+	raw := strconv.Itoa(int(score)) + "|" + createdAt.UTC().Format(time.RFC3339Nano) + "|" + id
+	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+func projectActiveCursorParams(cursor *projectActiveCursor) (hasCursor bool, score int32, createdAt pgtype.Timestamptz, id string) {
+	if cursor == nil {
+		return false, 0, pgtype.Timestamptz{Time: time.Unix(0, 0), Valid: true}, zeroUUID
+	}
+	return true, cursor.score, pgtype.Timestamptz{Time: cursor.createdAt, Valid: true}, cursor.id
+}
+
 func (h *ProjectHandler) List(c *gin.Context) {
 	limit, ok := parseProjectsLimit(c)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
 		return
 	}
-	cursor, ok := parseProjectsCursor(c)
+	sort, ok := parseProjectsSort(c)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sort"})
 		return
 	}
+	search := c.Query("search")
 
-	hasCursor, cursorCreatedAt, cursorID := cursorParams(cursor)
-	rows, err := h.Queries.ListProjects(c.Request.Context(), db.ListProjectsParams{
-		HasCursor:       hasCursor,
-		CursorCreatedAt: cursorCreatedAt,
-		CursorID:        cursorID,
-		LimitCount:      int32(limit + 1),
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return
-	}
-
-	hasMore := len(rows) > limit
-	if hasMore {
-		rows = rows[:limit]
-	}
-
-	projects := make([]projectResponse, 0, len(rows))
-	for _, row := range rows {
-		projects = append(projects, newProjectResponse(row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName))
-	}
-
+	var projects []projectResponse
 	var nextCursor *string
-	if hasMore {
-		last := rows[len(rows)-1]
-		cur := encodeProjectsCursor(last.CreatedAt.Time, last.ID)
-		nextCursor = &cur
+
+	if sort == "active" {
+		cursor, ok := parseProjectActiveCursor(c)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+			return
+		}
+		hasCursor, cursorScore, cursorCreatedAt, cursorID := projectActiveCursorParams(cursor)
+		rows, err := h.Queries.ListProjectsActive(c.Request.Context(), db.ListProjectsActiveParams{
+			Search:          search,
+			HasCursor:       hasCursor,
+			CursorScore:     cursorScore,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			LimitCount:      int32(limit + 1),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			return
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		projects = make([]projectResponse, 0, len(rows))
+		for _, row := range rows {
+			projects = append(projects, newProjectResponse(row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName, row.RequestCount, row.VoteCount))
+		}
+		if hasMore {
+			last := rows[len(rows)-1]
+			cur := encodeProjectActiveCursor(last.RequestCount+last.VoteCount, last.CreatedAt.Time, last.ID)
+			nextCursor = &cur
+		}
+	} else {
+		cursor, ok := parseProjectsCursor(c)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+			return
+		}
+		hasCursor, cursorCreatedAt, cursorID := cursorParams(cursor)
+		rows, err := h.Queries.ListProjects(c.Request.Context(), db.ListProjectsParams{
+			Search:          search,
+			HasCursor:       hasCursor,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			LimitCount:      int32(limit + 1),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			return
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		projects = make([]projectResponse, 0, len(rows))
+		for _, row := range rows {
+			projects = append(projects, newProjectResponse(row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName, row.RequestCount, row.VoteCount))
+		}
+		if hasMore {
+			last := rows[len(rows)-1]
+			cur := encodeProjectsCursor(last.CreatedAt.Time, last.ID)
+			nextCursor = &cur
+		}
 	}
 
 	c.JSON(http.StatusOK, projectsListResponse{Projects: projects, NextCursor: nextCursor})
@@ -173,40 +269,81 @@ func (h *ProjectHandler) ListMine(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
 		return
 	}
-	cursor, ok := parseProjectsCursor(c)
+	sort, ok := parseProjectsSort(c)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sort"})
 		return
 	}
+	search := c.Query("search")
 
-	hasCursor, cursorCreatedAt, cursorID := cursorParams(cursor)
-	rows, err := h.Queries.ListProjectsByOwner(c.Request.Context(), db.ListProjectsByOwnerParams{
-		OwnerID:         userID,
-		HasCursor:       hasCursor,
-		CursorCreatedAt: cursorCreatedAt,
-		CursorID:        cursorID,
-		LimitCount:      int32(limit + 1),
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return
-	}
-
-	hasMore := len(rows) > limit
-	if hasMore {
-		rows = rows[:limit]
-	}
-
-	projects := make([]projectResponse, 0, len(rows))
-	for _, row := range rows {
-		projects = append(projects, newProjectResponse(row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName))
-	}
-
+	var projects []projectResponse
 	var nextCursor *string
-	if hasMore {
-		last := rows[len(rows)-1]
-		cur := encodeProjectsCursor(last.CreatedAt.Time, last.ID)
-		nextCursor = &cur
+
+	if sort == "active" {
+		cursor, ok := parseProjectActiveCursor(c)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+			return
+		}
+		hasCursor, cursorScore, cursorCreatedAt, cursorID := projectActiveCursorParams(cursor)
+		rows, err := h.Queries.ListProjectsByOwnerActive(c.Request.Context(), db.ListProjectsByOwnerActiveParams{
+			OwnerID:         userID,
+			Search:          search,
+			HasCursor:       hasCursor,
+			CursorScore:     cursorScore,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			LimitCount:      int32(limit + 1),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			return
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		projects = make([]projectResponse, 0, len(rows))
+		for _, row := range rows {
+			projects = append(projects, newProjectResponse(row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName, row.RequestCount, row.VoteCount))
+		}
+		if hasMore {
+			last := rows[len(rows)-1]
+			cur := encodeProjectActiveCursor(last.RequestCount+last.VoteCount, last.CreatedAt.Time, last.ID)
+			nextCursor = &cur
+		}
+	} else {
+		cursor, ok := parseProjectsCursor(c)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+			return
+		}
+		hasCursor, cursorCreatedAt, cursorID := cursorParams(cursor)
+		rows, err := h.Queries.ListProjectsByOwner(c.Request.Context(), db.ListProjectsByOwnerParams{
+			OwnerID:         userID,
+			Search:          search,
+			HasCursor:       hasCursor,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			LimitCount:      int32(limit + 1),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			return
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		projects = make([]projectResponse, 0, len(rows))
+		for _, row := range rows {
+			projects = append(projects, newProjectResponse(row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName, row.RequestCount, row.VoteCount))
+		}
+		if hasMore {
+			last := rows[len(rows)-1]
+			cur := encodeProjectsCursor(last.CreatedAt.Time, last.ID)
+			nextCursor = &cur
+		}
 	}
 
 	c.JSON(http.StatusOK, projectsListResponse{Projects: projects, NextCursor: nextCursor})
@@ -234,7 +371,7 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"project": newProjectResponse(
-		row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName,
+		row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, row.OwnerName, row.RequestCount, row.VoteCount,
 	)})
 }
 
@@ -323,7 +460,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"project": newProjectResponse(
-		row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, owner.Name,
+		row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, owner.Name, 0, 0,
 	)})
 }
 
@@ -377,7 +514,7 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"project": newProjectResponse(
-		row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, existing.OwnerName,
+		row.ID, row.OwnerID, row.Name, row.Slug, row.Description, row.CreatedAt, existing.OwnerName, existing.RequestCount, existing.VoteCount,
 	)})
 }
 

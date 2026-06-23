@@ -8,6 +8,19 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/src/assets/png/favicon-16.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Signal</title>
+    <script>
+      // Apply the persisted (or system) theme before first paint so every page —
+      // including logged-out auth pages without a ThemeToggle — honors it (no FOUC).
+      (function () {
+        try {
+          var t = localStorage.getItem("signal_theme")
+          if (t !== "light" && t !== "dark") {
+            t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+          }
+          if (t === "dark") document.documentElement.classList.add("dark")
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

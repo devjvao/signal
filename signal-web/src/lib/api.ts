@@ -87,6 +87,8 @@ export interface Project {
   description: string | null
   ownerId: string
   ownerName: string
+  requestCount: number
+  voteCount: number
   createdAt: string
 }
 
@@ -98,13 +100,17 @@ export interface ProjectsPage {
 interface ProjectsPageParams {
   cursor?: string
   limit?: number
+  search?: string
+  sort?: "newest" | "active"
 }
 
 function projectsQueryString(params: ProjectsPageParams): string {
-  const search = new URLSearchParams()
-  if (params.cursor) search.set("cursor", params.cursor)
-  if (params.limit !== undefined) search.set("limit", String(params.limit))
-  const query = search.toString()
+  const qs = new URLSearchParams()
+  if (params.cursor) qs.set("cursor", params.cursor)
+  if (params.limit !== undefined) qs.set("limit", String(params.limit))
+  if (params.search) qs.set("search", params.search)
+  if (params.sort && params.sort !== "newest") qs.set("sort", params.sort)
+  const query = qs.toString()
   return query ? `?${query}` : ""
 }
 
@@ -164,13 +170,17 @@ export interface FeatureRequestsPage {
 interface FeatureRequestsPageParams {
   cursor?: string
   limit?: number
+  status?: string
+  sort?: "votes" | "newest"
 }
 
 function featureRequestsQueryString(params: FeatureRequestsPageParams): string {
-  const search = new URLSearchParams()
-  if (params.cursor) search.set("cursor", params.cursor)
-  if (params.limit !== undefined) search.set("limit", String(params.limit))
-  const query = search.toString()
+  const qs = new URLSearchParams()
+  if (params.cursor) qs.set("cursor", params.cursor)
+  if (params.limit !== undefined) qs.set("limit", String(params.limit))
+  if (params.status) qs.set("status", params.status)
+  if (params.sort && params.sort !== "votes") qs.set("sort", params.sort)
+  const query = qs.toString()
   return query ? `?${query}` : ""
 }
 

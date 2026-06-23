@@ -53,20 +53,34 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (C
 }
 
 const getProjectByID = `-- name: GetProjectByID :one
-SELECT p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, u.name AS owner_name
+SELECT
+    p.id,
+    p.owner_id,
+    p.name,
+    p.slug,
+    p.description,
+    p.created_at,
+    u.name AS owner_name,
+    COUNT(DISTINCT fr.id)::int AS request_count,
+    COUNT(v.id)::int AS vote_count
 FROM projects p
-JOIN users u ON u.id = p.owner_id
+         JOIN users u ON u.id = p.owner_id
+         LEFT JOIN feature_requests fr ON fr.project_id = p.id AND fr.deleted_at IS NULL
+         LEFT JOIN votes v ON v.feature_request_id = fr.id AND v.deleted_at IS NULL
 WHERE p.id = $1::uuid AND p.deleted_at IS NULL
+GROUP BY p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, u.name
 `
 
 type GetProjectByIDRow struct {
-	ID          string
-	OwnerID     string
-	Name        string
-	Slug        string
-	Description pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	OwnerName   string
+	ID           string
+	OwnerID      string
+	Name         string
+	Slug         string
+	Description  pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	OwnerName    string
+	RequestCount int32
+	VoteCount    int32
 }
 
 func (q *Queries) GetProjectByID(ctx context.Context, id string) (GetProjectByIDRow, error) {
@@ -80,6 +94,8 @@ func (q *Queries) GetProjectByID(ctx context.Context, id string) (GetProjectByID
 		&i.Description,
 		&i.CreatedAt,
 		&i.OwnerName,
+		&i.RequestCount,
+		&i.VoteCount,
 	)
 	return i, err
 }
@@ -92,20 +108,27 @@ SELECT
     p.slug,
     p.description,
     p.created_at,
-    u.name AS owner_name
+    u.name AS owner_name,
+    COUNT(DISTINCT fr.id)::int AS request_count,
+    COUNT(v.id)::int AS vote_count
 FROM projects p
-JOIN users u ON u.id = p.owner_id
+         JOIN users u ON u.id = p.owner_id
+         LEFT JOIN feature_requests fr ON fr.project_id = p.id AND fr.deleted_at IS NULL
+         LEFT JOIN votes v ON v.feature_request_id = fr.id AND v.deleted_at IS NULL
 WHERE p.deleted_at IS NULL
+  AND ($1::text = '' OR p.name ILIKE '%' || $1::text || '%')
   AND (
-    $1::bool = false
-    OR p.created_at < $2::timestamptz
-    OR (p.created_at = $2::timestamptz AND p.id < $3::uuid)
+    $2::bool = false
+    OR p.created_at < $3::timestamptz
+    OR (p.created_at = $3::timestamptz AND p.id < $4::uuid)
   )
+GROUP BY p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, u.name
 ORDER BY p.created_at DESC, p.id DESC
-LIMIT $4::int
+    LIMIT $5::int
 `
 
 type ListProjectsParams struct {
+	Search          string
 	HasCursor       bool
 	CursorCreatedAt pgtype.Timestamptz
 	CursorID        string
@@ -113,17 +136,20 @@ type ListProjectsParams struct {
 }
 
 type ListProjectsRow struct {
-	ID          string
-	OwnerID     string
-	Name        string
-	Slug        string
-	Description pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	OwnerName   string
+	ID           string
+	OwnerID      string
+	Name         string
+	Slug         string
+	Description  pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	OwnerName    string
+	RequestCount int32
+	VoteCount    int32
 }
 
 func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]ListProjectsRow, error) {
 	rows, err := q.db.Query(ctx, listProjects,
+		arg.Search,
 		arg.HasCursor,
 		arg.CursorCreatedAt,
 		arg.CursorID,
@@ -144,6 +170,98 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]L
 			&i.Description,
 			&i.CreatedAt,
 			&i.OwnerName,
+			&i.RequestCount,
+			&i.VoteCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectsActive = `-- name: ListProjectsActive :many
+WITH project_scores AS (
+    SELECT
+        p.id,
+        p.owner_id,
+        p.name,
+        p.slug,
+        p.description,
+        p.created_at,
+        u.name AS owner_name,
+        COUNT(DISTINCT fr.id)::int AS request_count,
+        COUNT(v.id)::int AS vote_count
+    FROM projects p
+    JOIN users u ON u.id = p.owner_id
+    LEFT JOIN feature_requests fr ON fr.project_id = p.id AND fr.deleted_at IS NULL
+    LEFT JOIN votes v ON v.feature_request_id = fr.id AND v.deleted_at IS NULL
+    WHERE p.deleted_at IS NULL
+      AND ($6::text = '' OR p.name ILIKE '%' || $6::text || '%')
+    GROUP BY p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, u.name
+)
+SELECT id, owner_id, name, slug, description, created_at, owner_name, request_count, vote_count
+FROM project_scores
+WHERE (
+    $1::bool = false
+    OR (request_count + vote_count) < $2::int
+    OR ((request_count + vote_count) = $2::int AND created_at < $3::timestamptz)
+    OR ((request_count + vote_count) = $2::int AND created_at = $3::timestamptz AND id < $4::uuid)
+)
+ORDER BY (request_count + vote_count) DESC, created_at DESC, id DESC
+LIMIT $5::int
+`
+
+type ListProjectsActiveParams struct {
+	HasCursor       bool
+	CursorScore     int32
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        string
+	LimitCount      int32
+	Search          string
+}
+
+type ListProjectsActiveRow struct {
+	ID           string
+	OwnerID      string
+	Name         string
+	Slug         string
+	Description  pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	OwnerName    string
+	RequestCount int32
+	VoteCount    int32
+}
+
+func (q *Queries) ListProjectsActive(ctx context.Context, arg ListProjectsActiveParams) ([]ListProjectsActiveRow, error) {
+	rows, err := q.db.Query(ctx, listProjectsActive,
+		arg.HasCursor,
+		arg.CursorScore,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.LimitCount,
+		arg.Search,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectsActiveRow
+	for rows.Next() {
+		var i ListProjectsActiveRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Slug,
+			&i.Description,
+			&i.CreatedAt,
+			&i.OwnerName,
+			&i.RequestCount,
+			&i.VoteCount,
 		); err != nil {
 			return nil, err
 		}
@@ -163,21 +281,28 @@ SELECT
     p.slug,
     p.description,
     p.created_at,
-    u.name AS owner_name
+    u.name AS owner_name,
+    COUNT(DISTINCT fr.id)::int AS request_count,
+    COUNT(v.id)::int AS vote_count
 FROM projects p
-JOIN users u ON u.id = p.owner_id
+         JOIN users u ON u.id = p.owner_id
+         LEFT JOIN feature_requests fr ON fr.project_id = p.id AND fr.deleted_at IS NULL
+         LEFT JOIN votes v ON v.feature_request_id = fr.id AND v.deleted_at IS NULL
 WHERE p.deleted_at IS NULL
-  AND p.owner_id = $1::uuid
+  AND ($1::text = '' OR p.name ILIKE '%' || $1::text || '%')
+  AND p.owner_id = $2::uuid
   AND (
-    $2::bool = false
-    OR p.created_at < $3::timestamptz
-    OR (p.created_at = $3::timestamptz AND p.id < $4::uuid)
+    $3::bool = false
+    OR p.created_at < $4::timestamptz
+    OR (p.created_at = $4::timestamptz AND p.id < $5::uuid)
   )
+GROUP BY p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, u.name
 ORDER BY p.created_at DESC, p.id DESC
-LIMIT $5::int
+    LIMIT $6::int
 `
 
 type ListProjectsByOwnerParams struct {
+	Search          string
 	OwnerID         string
 	HasCursor       bool
 	CursorCreatedAt pgtype.Timestamptz
@@ -186,17 +311,20 @@ type ListProjectsByOwnerParams struct {
 }
 
 type ListProjectsByOwnerRow struct {
-	ID          string
-	OwnerID     string
-	Name        string
-	Slug        string
-	Description pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	OwnerName   string
+	ID           string
+	OwnerID      string
+	Name         string
+	Slug         string
+	Description  pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	OwnerName    string
+	RequestCount int32
+	VoteCount    int32
 }
 
 func (q *Queries) ListProjectsByOwner(ctx context.Context, arg ListProjectsByOwnerParams) ([]ListProjectsByOwnerRow, error) {
 	rows, err := q.db.Query(ctx, listProjectsByOwner,
+		arg.Search,
 		arg.OwnerID,
 		arg.HasCursor,
 		arg.CursorCreatedAt,
@@ -218,6 +346,101 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, arg ListProjectsByOwn
 			&i.Description,
 			&i.CreatedAt,
 			&i.OwnerName,
+			&i.RequestCount,
+			&i.VoteCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectsByOwnerActive = `-- name: ListProjectsByOwnerActive :many
+WITH project_scores AS (
+    SELECT
+        p.id,
+        p.owner_id,
+        p.name,
+        p.slug,
+        p.description,
+        p.created_at,
+        u.name AS owner_name,
+        COUNT(DISTINCT fr.id)::int AS request_count,
+        COUNT(v.id)::int AS vote_count
+    FROM projects p
+    JOIN users u ON u.id = p.owner_id
+    LEFT JOIN feature_requests fr ON fr.project_id = p.id AND fr.deleted_at IS NULL
+    LEFT JOIN votes v ON v.feature_request_id = fr.id AND v.deleted_at IS NULL
+    WHERE p.deleted_at IS NULL
+      AND p.owner_id = $6::uuid
+      AND ($7::text = '' OR p.name ILIKE '%' || $7::text || '%')
+    GROUP BY p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, u.name
+)
+SELECT id, owner_id, name, slug, description, created_at, owner_name, request_count, vote_count
+FROM project_scores
+WHERE (
+    $1::bool = false
+    OR (request_count + vote_count) < $2::int
+    OR ((request_count + vote_count) = $2::int AND created_at < $3::timestamptz)
+    OR ((request_count + vote_count) = $2::int AND created_at = $3::timestamptz AND id < $4::uuid)
+)
+ORDER BY (request_count + vote_count) DESC, created_at DESC, id DESC
+LIMIT $5::int
+`
+
+type ListProjectsByOwnerActiveParams struct {
+	HasCursor       bool
+	CursorScore     int32
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        string
+	LimitCount      int32
+	OwnerID         string
+	Search          string
+}
+
+type ListProjectsByOwnerActiveRow struct {
+	ID           string
+	OwnerID      string
+	Name         string
+	Slug         string
+	Description  pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	OwnerName    string
+	RequestCount int32
+	VoteCount    int32
+}
+
+func (q *Queries) ListProjectsByOwnerActive(ctx context.Context, arg ListProjectsByOwnerActiveParams) ([]ListProjectsByOwnerActiveRow, error) {
+	rows, err := q.db.Query(ctx, listProjectsByOwnerActive,
+		arg.HasCursor,
+		arg.CursorScore,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.LimitCount,
+		arg.OwnerID,
+		arg.Search,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectsByOwnerActiveRow
+	for rows.Next() {
+		var i ListProjectsByOwnerActiveRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Slug,
+			&i.Description,
+			&i.CreatedAt,
+			&i.OwnerName,
+			&i.RequestCount,
+			&i.VoteCount,
 		); err != nil {
 			return nil, err
 		}
