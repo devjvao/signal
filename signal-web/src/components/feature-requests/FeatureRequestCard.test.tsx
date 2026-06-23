@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import * as authContext from "@/context/AuthContext"
+import { ToastProvider } from "@/context/ToastContext"
 import * as api from "@/lib/api"
 import type { FeatureRequest } from "@/lib/api"
 import { FeatureRequestCard } from "./FeatureRequestCard"
@@ -41,9 +42,11 @@ function renderCard(featureRequest: FeatureRequest, projectOwnerId = "owner-1") 
   const queryClient = new QueryClient()
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <FeatureRequestCard featureRequest={featureRequest} projectOwnerId={projectOwnerId} />
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter>
+          <FeatureRequestCard featureRequest={featureRequest} projectOwnerId={projectOwnerId} />
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>
   )
 }
@@ -70,27 +73,27 @@ describe("FeatureRequestCard", () => {
   it("shows Edit only for the author when there are no upvotes", () => {
     mockUser("author-1")
     renderCard({ ...base, upvoteCount: 0 })
-    expect(screen.getByText("Edit")).toBeInTheDocument()
+    expect(screen.getByLabelText("Edit feature request")).toBeInTheDocument()
   })
 
   it("hides Edit for the author once it has upvotes", () => {
     mockUser("author-1")
     renderCard({ ...base, upvoteCount: 2 })
-    expect(screen.queryByText("Edit")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Edit feature request")).not.toBeInTheDocument()
   })
 
   it("shows Delete for the project owner who is not the author", () => {
     mockUser("owner-1")
     renderCard(base, "owner-1")
-    expect(screen.getByText("Delete")).toBeInTheDocument()
-    expect(screen.queryByText("Edit")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Delete feature request")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Edit feature request")).not.toBeInTheDocument()
   })
 
   it("hides Edit and Delete for an unrelated viewer", () => {
     mockUser("stranger")
     renderCard(base)
-    expect(screen.queryByText("Edit")).not.toBeInTheDocument()
-    expect(screen.queryByText("Delete")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Edit feature request")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Delete feature request")).not.toBeInTheDocument()
   })
 
   it("calls voteFeatureRequest when an eligible viewer upvotes", async () => {
@@ -132,20 +135,41 @@ describe("FeatureRequestCard", () => {
     renderCard(base, "owner-1")
 
     await userEvent.click(screen.getByRole("combobox", { name: "Status" }))
-    await userEvent.click(await screen.findByText("planned"))
+    await userEvent.click(await screen.findByText("Planned"))
 
     expect(api.updateFeatureRequestStatus).toHaveBeenCalledWith("f1", "planned")
   })
 
-  it("shows an inline error and keeps the original status when the update fails", async () => {
+  it("shows an error toast and keeps the original status when the update fails", async () => {
     mockUser("owner-1")
     vi.spyOn(api, "updateFeatureRequestStatus").mockRejectedValue(new api.ApiError(403, "forbidden"))
     renderCard(base, "owner-1")
 
     await userEvent.click(screen.getByRole("combobox", { name: "Status" }))
-    await userEvent.click(await screen.findByText("planned"))
+    await userEvent.click(await screen.findByText("Planned"))
 
-    expect(await screen.findByText("forbidden")).toBeInTheDocument()
+    expect(await screen.findByText("Couldn't update status")).toBeInTheDocument()
     expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("open")
+  })
+
+  it("shows a non-interactive YOUR REQUEST control for the author instead of an upvote button", () => {
+    mockUser("author-1")
+    renderCard({ ...base, upvoteCount: 2 })
+    expect(screen.getByText(/your request/i)).toBeInTheDocument()
+    expect(screen.getByText("2")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /upvote/i })).not.toBeInTheDocument()
+  })
+
+  it("shows a success toast after the project owner changes the status", async () => {
+    mockUser("owner-1")
+    vi.spyOn(api, "updateFeatureRequestStatus").mockResolvedValue({
+      featureRequest: { ...base, status: "planned" },
+    })
+    renderCard(base, "owner-1")
+
+    await userEvent.click(screen.getByRole("combobox", { name: "Status" }))
+    await userEvent.click(await screen.findByText("Planned"))
+
+    expect(await screen.findByText("Status updated")).toBeInTheDocument()
   })
 })

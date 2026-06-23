@@ -102,6 +102,54 @@ func featureRequestCursorParams(cursor *featureRequestCursor) (hasCursor bool, c
 	return true, cursor.count, pgtype.Timestamptz{Time: cursor.createdAt, Valid: true}, cursor.id
 }
 
+func parseFeatureRequestsSort(c *gin.Context) (string, bool) {
+	raw := c.Query("sort")
+	if raw == "" {
+		return "votes", true
+	}
+	if raw == "votes" || raw == "newest" {
+		return raw, true
+	}
+	return "", false
+}
+
+type featureRequestNewestCursor struct {
+	createdAt time.Time
+	id        string
+}
+
+func parseFeatureRequestNewestCursor(c *gin.Context) (*featureRequestNewestCursor, bool) {
+	raw := c.Query("cursor")
+	if raw == "" {
+		return nil, true
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, false
+	}
+	parts := strings.SplitN(string(decoded), "|", 2)
+	if len(parts) != 2 || !uuidPattern.MatchString(parts[1]) {
+		return nil, false
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return nil, false
+	}
+	return &featureRequestNewestCursor{createdAt: createdAt, id: parts[1]}, true
+}
+
+func encodeFeatureRequestNewestCursor(createdAt time.Time, id string) string {
+	raw := createdAt.UTC().Format(time.RFC3339Nano) + "|" + id
+	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+func featureRequestNewestCursorParams(cursor *featureRequestNewestCursor) (hasCursor bool, createdAt pgtype.Timestamptz, id string) {
+	if cursor == nil {
+		return false, pgtype.Timestamptz{Time: time.Unix(0, 0), Valid: true}, zeroUUID
+	}
+	return true, pgtype.Timestamptz{Time: cursor.createdAt, Valid: true}, cursor.id
+}
+
 func newFeatureRequestResponse(id, projectID, createdBy, title string, description pgtype.Text, status string, createdAt pgtype.Timestamptz, createdByName string, upvoteCount int32, viewerHasVoted bool) featureRequestResponse {
 	var desc *string
 	if description.Valid {
@@ -150,9 +198,14 @@ func (h *FeatureRequestHandler) List(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
 		return
 	}
-	cursor, ok := parseFeatureRequestsCursor(c)
+	status := c.Query("status")
+	if status != "" && !validFeatureRequestStatuses[status] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+		return
+	}
+	sort, ok := parseFeatureRequestsSort(c)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sort"})
 		return
 	}
 
@@ -165,36 +218,76 @@ func (h *FeatureRequestHandler) List(c *gin.Context) {
 		return
 	}
 
-	hasCursor, cursorCount, cursorCreatedAt, cursorID := featureRequestCursorParams(cursor)
-	rows, err := h.Queries.ListFeatureRequests(c.Request.Context(), db.ListFeatureRequestsParams{
-		ViewerID:        viewerID,
-		ProjectID:       projectID,
-		HasCursor:       hasCursor,
-		CursorCount:     cursorCount,
-		CursorCreatedAt: cursorCreatedAt,
-		CursorID:        cursorID,
-		LimitCount:      int32(limit + 1),
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return
-	}
-
-	hasMore := len(rows) > limit
-	if hasMore {
-		rows = rows[:limit]
-	}
-
-	items := make([]featureRequestResponse, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, newFeatureRequestResponse(row.ID, row.ProjectID, row.CreatedBy, row.Title, row.Description, row.Status, row.CreatedAt, row.CreatedByName, row.UpvoteCount, row.ViewerHasVoted))
-	}
-
+	var items []featureRequestResponse
 	var nextCursor *string
-	if hasMore {
-		last := rows[len(rows)-1]
-		cur := encodeFeatureRequestsCursor(last.UpvoteCount, last.CreatedAt.Time, last.ID)
-		nextCursor = &cur
+
+	if sort == "newest" {
+		cursor, ok := parseFeatureRequestNewestCursor(c)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+			return
+		}
+		hasCursor, cursorCreatedAt, cursorID := featureRequestNewestCursorParams(cursor)
+		rows, err := h.Queries.ListFeatureRequestsNewest(c.Request.Context(), db.ListFeatureRequestsNewestParams{
+			ViewerID:        viewerID,
+			ProjectID:       projectID,
+			Status:          status,
+			HasCursor:       hasCursor,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			LimitCount:      int32(limit + 1),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			return
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		items = make([]featureRequestResponse, 0, len(rows))
+		for _, row := range rows {
+			items = append(items, newFeatureRequestResponse(row.ID, row.ProjectID, row.CreatedBy, row.Title, row.Description, row.Status, row.CreatedAt, row.CreatedByName, row.UpvoteCount, row.ViewerHasVoted))
+		}
+		if hasMore {
+			last := rows[len(rows)-1]
+			cur := encodeFeatureRequestNewestCursor(last.CreatedAt.Time, last.ID)
+			nextCursor = &cur
+		}
+	} else {
+		cursor, ok := parseFeatureRequestsCursor(c)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+			return
+		}
+		hasCursor, cursorCount, cursorCreatedAt, cursorID := featureRequestCursorParams(cursor)
+		rows, err := h.Queries.ListFeatureRequests(c.Request.Context(), db.ListFeatureRequestsParams{
+			ViewerID:        viewerID,
+			ProjectID:       projectID,
+			Status:          status,
+			HasCursor:       hasCursor,
+			CursorCount:     cursorCount,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorID:        cursorID,
+			LimitCount:      int32(limit + 1),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+			return
+		}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+		}
+		items = make([]featureRequestResponse, 0, len(rows))
+		for _, row := range rows {
+			items = append(items, newFeatureRequestResponse(row.ID, row.ProjectID, row.CreatedBy, row.Title, row.Description, row.Status, row.CreatedAt, row.CreatedByName, row.UpvoteCount, row.ViewerHasVoted))
+		}
+		if hasMore {
+			last := rows[len(rows)-1]
+			cur := encodeFeatureRequestsCursor(last.UpvoteCount, last.CreatedAt.Time, last.ID)
+			nextCursor = &cur
+		}
 	}
 
 	c.JSON(http.StatusOK, featureRequestsListResponse{FeatureRequests: items, NextCursor: nextCursor})

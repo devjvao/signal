@@ -5,6 +5,7 @@ import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import * as authContext from "@/context/AuthContext"
+import { ToastProvider } from "@/context/ToastContext"
 import * as api from "@/lib/api"
 import { ProjectList } from "./ProjectList"
 
@@ -44,7 +45,9 @@ function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient()
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter>{ui}</MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>
   )
 }
@@ -57,6 +60,8 @@ function project(id: string) {
     description: null,
     ownerId: "owner-1",
     ownerName: "Ada Lovelace",
+    requestCount: 0,
+    voteCount: 0,
     createdAt: "2026-06-21T00:00:00Z",
   }
 }
@@ -85,7 +90,7 @@ describe("ProjectList", () => {
 
     renderWithClient(<ProjectList scope="all" />)
 
-    expect(await screen.findByText("No projects yet.")).toBeInTheDocument()
+    expect(await screen.findByText("No projects yet")).toBeInTheDocument()
   })
 
   it("fetches the next page when the sentinel intersects", async () => {
@@ -100,6 +105,33 @@ describe("ProjectList", () => {
     intersectionCallback?.([{ isIntersecting: true }])
 
     expect(await screen.findByText("Project 2")).toBeInTheDocument()
-    expect(spy).toHaveBeenLastCalledWith({ cursor: "cursor-1" })
+    expect(spy).toHaveBeenLastCalledWith({ cursor: "cursor-1", search: "", sort: "newest" })
+  })
+
+  it("passes search and sort through to listProjects", async () => {
+    const spy = vi.spyOn(api, "listProjects").mockResolvedValue({ projects: [project("1")], nextCursor: null })
+    renderWithClient(<ProjectList scope="all" search="signal" sort="active" />)
+    expect(await screen.findByText("Project 1")).toBeInTheDocument()
+    expect(spy).toHaveBeenCalledWith({ cursor: undefined, search: "signal", sort: "active" })
+  })
+
+  it("restarts pagination when search changes", async () => {
+    const spy = vi.spyOn(api, "listProjects")
+    spy.mockResolvedValueOnce({ projects: [project("1")], nextCursor: null })
+    spy.mockResolvedValueOnce({ projects: [project("2")], nextCursor: null })
+
+    const { rerender } = renderWithClient(<ProjectList scope="all" search="" sort="newest" />)
+    expect(await screen.findByText("Project 1")).toBeInTheDocument()
+
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ProjectList scope="all" search="other" sort="newest" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("Project 2")).toBeInTheDocument()
+    expect(spy).toHaveBeenLastCalledWith({ cursor: undefined, search: "other", sort: "newest" })
   })
 })

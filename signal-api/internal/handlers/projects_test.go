@@ -705,3 +705,345 @@ func TestGet_InvalidID(t *testing.T) {
 		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestList_IncludesAggregateCounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	voterID := seedUser(t, pool, "Grace Hopper", "grace@example.com")
+	projectID := seedProject(t, pool, ownerID, "Signal", "signal", time.Now())
+
+	frID := ""
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO feature_requests (project_id, created_by, title) VALUES ($1, $2, $3) RETURNING id`,
+		projectID, ownerID, "Dark mode",
+	).Scan(&frID); err != nil {
+		t.Fatalf("failed to seed feature request: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO votes (feature_request_id, user_id) VALUES ($1, $2)`, frID, voterID,
+	); err != nil {
+		t.Fatalf("failed to seed vote: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/projects", h.List)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Projects []struct {
+			ID           string `json:"id"`
+			RequestCount int    `json:"requestCount"`
+			VoteCount    int    `json:"voteCount"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(resp.Projects) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(resp.Projects))
+	}
+	if resp.Projects[0].RequestCount != 1 || resp.Projects[0].VoteCount != 1 {
+		t.Errorf("expected requestCount=1 voteCount=1, got %+v", resp.Projects[0])
+	}
+}
+
+func seedFeatureRequestAndVotes(t *testing.T, pool *pgxpool.Pool, projectID, ownerID string, voteCount int) {
+	t.Helper()
+	var frID string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO feature_requests (project_id, created_by, title) VALUES ($1, $2, 'FR') RETURNING id`,
+		projectID, ownerID,
+	).Scan(&frID); err != nil {
+		t.Fatalf("failed to seed feature request: %v", err)
+	}
+	for i := 0; i < voteCount; i++ {
+		voterID := seedUser(t, pool, fmt.Sprintf("Voter %s %d", projectID, i), fmt.Sprintf("voter-%s-%d@example.com", projectID, i))
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO votes (feature_request_id, user_id) VALUES ($1, $2)`, frID, voterID,
+		); err != nil {
+			t.Fatalf("failed to seed vote: %v", err)
+		}
+	}
+}
+
+func TestList_SortActive_OrdersByEngagement(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	quiet := seedProject(t, pool, ownerID, "Quiet", "quiet", base)
+	loud := seedProject(t, pool, ownerID, "Loud", "loud", base.Add(time.Second))
+	seedFeatureRequestAndVotes(t, pool, loud, ownerID, 3)
+
+	r := gin.New()
+	r.GET("/projects", h.List)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects?sort=active", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Projects []struct {
+			ID string `json:"id"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(resp.Projects) != 2 || resp.Projects[0].ID != loud || resp.Projects[1].ID != quiet {
+		t.Fatalf("expected [loud, quiet], got %+v", resp.Projects)
+	}
+}
+
+func TestList_SortActive_PaginatesAcrossPages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 15; i++ {
+		id := seedProject(t, pool, ownerID, fmt.Sprintf("Project %d", i), fmt.Sprintf("project-%d", i), base.Add(time.Duration(i)*time.Second))
+		seedFeatureRequestAndVotes(t, pool, id, ownerID, i%4)
+		want[id] = true
+	}
+
+	r := gin.New()
+	r.GET("/projects", h.List)
+
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("too many pages, possible infinite loop")
+		}
+		path := "/projects?sort=active&limit=5"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Projects []struct {
+				ID string `json:"id"`
+			} `json:"projects"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		for _, p := range resp.Projects {
+			if seen[p.ID] {
+				t.Fatalf("project %s returned twice", p.ID)
+			}
+			seen[p.ID] = true
+		}
+		if resp.NextCursor == nil {
+			break
+		}
+		cursor = *resp.NextCursor
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("expected %d unique projects, got %d", len(want), len(seen))
+	}
+}
+
+func TestList_InvalidSort(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, _ := setupTestProjectHandler(t)
+	r := gin.New()
+	r.GET("/projects", h.List)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects?sort=banana", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestListMine_SortActive_OrdersByEngagement(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	quiet := seedProject(t, pool, ownerID, "Quiet", "quiet", base)
+	loud := seedProject(t, pool, ownerID, "Loud", "loud", base.Add(time.Second))
+	seedFeatureRequestAndVotes(t, pool, loud, ownerID, 3)
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.GET("/mine", h.ListMine)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/mine?sort=active", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Projects []struct {
+			ID string `json:"id"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(resp.Projects) != 2 || resp.Projects[0].ID != loud || resp.Projects[1].ID != quiet {
+		t.Fatalf("expected [loud, quiet], got %+v", resp.Projects)
+	}
+}
+
+func TestListMine_SortActive_PaginatesAcrossPages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 15; i++ {
+		id := seedProject(t, pool, ownerID, fmt.Sprintf("Project %d", i), fmt.Sprintf("project-%d", i), base.Add(time.Duration(i)*time.Second))
+		seedFeatureRequestAndVotes(t, pool, id, ownerID, i%4)
+		want[id] = true
+	}
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.GET("/mine", h.ListMine)
+
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("too many pages, possible infinite loop")
+		}
+		path := "/projects/mine?sort=active&limit=5"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Projects []struct {
+				ID string `json:"id"`
+			} `json:"projects"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		for _, p := range resp.Projects {
+			if seen[p.ID] {
+				t.Fatalf("project %s returned twice", p.ID)
+			}
+			seen[p.ID] = true
+		}
+		if resp.NextCursor == nil {
+			break
+		}
+		cursor = *resp.NextCursor
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("expected %d unique projects, got %d", len(want), len(seen))
+	}
+}
+
+func TestListMine_InvalidSort(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	secret := []byte("test-secret")
+	token, err := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	r := gin.New()
+	protected := r.Group("/projects")
+	protected.Use(auth.Middleware(secret))
+	protected.GET("/mine", h.ListMine)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/mine?sort=banana", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestList_FiltersBySearch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, pool := setupTestProjectHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	matchID := seedProject(t, pool, ownerID, "Signal Platform", "signal-platform", base)
+	seedProject(t, pool, ownerID, "Unrelated", "unrelated", base.Add(time.Second))
+
+	r := gin.New()
+	r.GET("/projects", h.List)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects?search=signal", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Projects []struct {
+			ID string `json:"id"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(resp.Projects) != 1 || resp.Projects[0].ID != matchID {
+		t.Fatalf("expected only %s, got %+v", matchID, resp.Projects)
+	}
+}

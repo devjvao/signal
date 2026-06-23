@@ -38,12 +38,16 @@ const wordmarkSizes = {
 
 export interface LogoProps
   extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof logoVariants> {}
+    VariantProps<typeof logoVariants> {
+  /** Force the light-on-dark treatment (light icon + white wordmark) regardless of theme — for gradient hero panels. */
+  inverted?: boolean
+}
 
 function Logo({
   className,
   lockup = "horizontal",
   size = "default",
+  inverted = false,
   ...props
 }: LogoProps) {
   const resolvedSize = size ?? "default"
@@ -53,20 +57,27 @@ function Logo({
       className={cn(logoVariants({ lockup, size }), className)}
       {...props}
     >
-      <img
-        src={signalIcon}
-        alt=""
-        className={cn(iconSizes[resolvedSize], "dark:hidden")}
-      />
-      <img
-        src={signalIconDark}
-        alt=""
-        className={cn(iconSizes[resolvedSize], "hidden dark:block")}
-      />
+      {inverted ? (
+        <img src={signalIconDark} alt="" className={iconSizes[resolvedSize]} />
+      ) : (
+        <>
+          <img
+            src={signalIcon}
+            alt=""
+            className={cn(iconSizes[resolvedSize], "dark:hidden")}
+          />
+          <img
+            src={signalIconDark}
+            alt=""
+            className={cn(iconSizes[resolvedSize], "hidden dark:block")}
+          />
+        </>
+      )}
       {lockup !== "icon" && (
         <span
           className={cn(
-            "font-display font-extrabold tracking-tight text-foreground",
+            "font-display font-extrabold tracking-tight",
+            inverted ? "text-white" : "text-foreground",
             wordmarkSizes[resolvedSize]
           )}
         >

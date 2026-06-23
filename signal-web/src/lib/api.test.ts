@@ -114,12 +114,34 @@ describe("listProjects", () => {
   })
 
   it("returns the parsed projects page", async () => {
-    const page = { projects: [{ id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }], nextCursor: "next" }
+    const page = { projects: [{ id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", requestCount: 0, voteCount: 0, createdAt: "2026-06-21T00:00:00Z" }], nextCursor: "next" }
     vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, page))
 
     const result = await listProjects()
 
     expect(result).toEqual(page)
+  })
+
+  it("includes search and sort when provided", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { projects: [], nextCursor: null }))
+    await listProjects({ search: "signal", sort: "active" })
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("search=signal")
+    expect(url).toContain("sort=active")
+  })
+
+  it("omits sort from the query string when sort is the default 'newest'", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { projects: [], nextCursor: null }))
+    await listProjects({ sort: "newest" })
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).not.toContain("sort=")
+  })
+
+  it("omits search from the query string when it is empty", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { projects: [], nextCursor: null }))
+    await listProjects({ search: "" })
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).not.toContain("search=")
   })
 })
 
@@ -136,7 +158,7 @@ describe("listMyProjects", () => {
 
 describe("createProject", () => {
   it("posts to /projects and returns the created project", async () => {
-    const project = { id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }
+    const project = { id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", requestCount: 0, voteCount: 0, createdAt: "2026-06-21T00:00:00Z" }
     vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(201, { project }))
 
     const result = await createProject({ name: "Signal", description: "A product" })
@@ -151,7 +173,7 @@ describe("createProject", () => {
 
 describe("updateProject", () => {
   it("puts to /projects/:id and returns the updated project", async () => {
-    const project = { id: "1", name: "Signal v2", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }
+    const project = { id: "1", name: "Signal v2", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", requestCount: 0, voteCount: 0, createdAt: "2026-06-21T00:00:00Z" }
     vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { project }))
 
     const result = await updateProject("1", { name: "Signal v2" })
@@ -178,7 +200,7 @@ describe("deleteProject", () => {
 
 describe("getProject", () => {
   it("requests /projects/:id and returns the project", async () => {
-    const project = { id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", createdAt: "2026-06-21T00:00:00Z" }
+    const project = { id: "1", name: "Signal", slug: "signal", description: null, ownerId: "o1", ownerName: "Ada", requestCount: 0, voteCount: 0, createdAt: "2026-06-21T00:00:00Z" }
     vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { project }))
 
     const result = await getProject("1")
@@ -199,6 +221,21 @@ describe("listFeatureRequests", () => {
     expect(url).toContain("/projects/p1/feature-requests")
     expect(url).toContain("cursor=abc")
     expect(url).toContain("limit=5")
+  })
+
+  it("includes status and sort when provided", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { featureRequests: [], nextCursor: null }))
+    await listFeatureRequests("p1", { status: "planned", sort: "newest" })
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).toContain("status=planned")
+    expect(url).toContain("sort=newest")
+  })
+
+  it("omits sort from the query string when sort is the default 'votes'", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockResponse(200, { featureRequests: [], nextCursor: null }))
+    await listFeatureRequests("p1", { sort: "votes" })
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(url).not.toContain("sort=")
   })
 })
 

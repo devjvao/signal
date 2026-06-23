@@ -10,4 +10,9 @@ describe("Label", () => {
     expect(label).toBeInTheDocument()
     expect(label).toHaveAttribute("for", "email")
   })
+
+  it("applies the mono uppercase field-label treatment", () => {
+    render(<Label htmlFor="email">Email</Label>)
+    expect(screen.getByText("Email")).toHaveClass("font-mono", "uppercase")
+  })
 })

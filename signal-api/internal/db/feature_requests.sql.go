@@ -149,19 +149,21 @@ LEFT JOIN (
 ) v ON v.feature_request_id = fr.id
 WHERE fr.project_id = $2::uuid
   AND fr.deleted_at IS NULL
+  AND ($3::text = '' OR fr.status = $3::text)
   AND (
-    $3::bool = false
-    OR COALESCE(v.cnt, 0)::int < $4::int
-    OR (COALESCE(v.cnt, 0)::int = $4::int AND fr.created_at < $5::timestamptz)
-    OR (COALESCE(v.cnt, 0)::int = $4::int AND fr.created_at = $5::timestamptz AND fr.id < $6::uuid)
+    $4::bool = false
+    OR COALESCE(v.cnt, 0)::int < $5::int
+    OR (COALESCE(v.cnt, 0)::int = $5::int AND fr.created_at < $6::timestamptz)
+    OR (COALESCE(v.cnt, 0)::int = $5::int AND fr.created_at = $6::timestamptz AND fr.id < $7::uuid)
   )
 ORDER BY upvote_count DESC, fr.created_at DESC, fr.id DESC
-LIMIT $7::int
+LIMIT $8::int
 `
 
 type ListFeatureRequestsParams struct {
 	ViewerID        string
 	ProjectID       string
+	Status          string
 	HasCursor       bool
 	CursorCount     int32
 	CursorCreatedAt pgtype.Timestamptz
@@ -186,6 +188,7 @@ func (q *Queries) ListFeatureRequests(ctx context.Context, arg ListFeatureReques
 	rows, err := q.db.Query(ctx, listFeatureRequests,
 		arg.ViewerID,
 		arg.ProjectID,
+		arg.Status,
 		arg.HasCursor,
 		arg.CursorCount,
 		arg.CursorCreatedAt,
@@ -199,6 +202,105 @@ func (q *Queries) ListFeatureRequests(ctx context.Context, arg ListFeatureReques
 	var items []ListFeatureRequestsRow
 	for rows.Next() {
 		var i ListFeatureRequestsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.CreatedBy,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.CreatedAt,
+			&i.CreatedByName,
+			&i.UpvoteCount,
+			&i.ViewerHasVoted,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeatureRequestsNewest = `-- name: ListFeatureRequestsNewest :many
+SELECT
+    fr.id,
+    fr.project_id,
+    fr.created_by,
+    fr.title,
+    fr.description,
+    fr.status,
+    fr.created_at,
+    u.name AS created_by_name,
+    COALESCE(v.cnt, 0)::int AS upvote_count,
+    EXISTS (
+        SELECT 1 FROM votes vv
+        WHERE vv.feature_request_id = fr.id
+          AND vv.user_id = $1::uuid
+          AND vv.deleted_at IS NULL
+    ) AS viewer_has_voted
+FROM feature_requests fr
+JOIN users u ON u.id = fr.created_by
+LEFT JOIN (
+    SELECT feature_request_id, count(*) AS cnt
+    FROM votes
+    WHERE deleted_at IS NULL
+    GROUP BY feature_request_id
+) v ON v.feature_request_id = fr.id
+WHERE fr.project_id = $2::uuid
+  AND fr.deleted_at IS NULL
+  AND ($3::text = '' OR fr.status = $3::text)
+  AND (
+    $4::bool = false
+    OR fr.created_at < $5::timestamptz
+    OR (fr.created_at = $5::timestamptz AND fr.id < $6::uuid)
+  )
+ORDER BY fr.created_at DESC, fr.id DESC
+LIMIT $7::int
+`
+
+type ListFeatureRequestsNewestParams struct {
+	ViewerID        string
+	ProjectID       string
+	Status          string
+	HasCursor       bool
+	CursorCreatedAt pgtype.Timestamptz
+	CursorID        string
+	LimitCount      int32
+}
+
+type ListFeatureRequestsNewestRow struct {
+	ID             string
+	ProjectID      string
+	CreatedBy      string
+	Title          string
+	Description    pgtype.Text
+	Status         string
+	CreatedAt      pgtype.Timestamptz
+	CreatedByName  string
+	UpvoteCount    int32
+	ViewerHasVoted bool
+}
+
+func (q *Queries) ListFeatureRequestsNewest(ctx context.Context, arg ListFeatureRequestsNewestParams) ([]ListFeatureRequestsNewestRow, error) {
+	rows, err := q.db.Query(ctx, listFeatureRequestsNewest,
+		arg.ViewerID,
+		arg.ProjectID,
+		arg.Status,
+		arg.HasCursor,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFeatureRequestsNewestRow
+	for rows.Next() {
+		var i ListFeatureRequestsNewestRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,

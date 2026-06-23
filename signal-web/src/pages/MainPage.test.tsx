@@ -1,9 +1,11 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
 import * as authContext from "@/context/AuthContext"
+import { ToastProvider } from "@/context/ToastContext"
 import MainPage from "./MainPage"
 
 vi.mock("@/context/AuthContext", async () => {
@@ -12,7 +14,17 @@ vi.mock("@/context/AuthContext", async () => {
 })
 
 vi.mock("@/components/projects/ProjectList", () => ({
-  ProjectList: ({ scope }: { scope: string }) => <div>ProjectList:{scope}</div>,
+  ProjectList: ({ scope, search, sort }: { scope: string; search?: string; sort?: string }) => (
+    <div>
+      ProjectList:{scope}:{search}:{sort}
+    </div>
+  ),
+}))
+
+vi.mock("@/components/ui/search-input", () => ({
+  SearchInput: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
+    <input aria-label="Search projects" value={value} onChange={(event) => onChange(event.target.value)} />
+  ),
 }))
 
 function mockAuthenticated() {
@@ -25,48 +37,77 @@ function mockAuthenticated() {
   })
 }
 
+function renderMain() {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ToastProvider>
+        <MemoryRouter>
+          <MainPage />
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>
+  )
+}
+
 describe("MainPage", () => {
   it("defaults to the All projects tab", () => {
     mockAuthenticated()
 
-    render(
-      <MemoryRouter>
-        <MainPage />
-      </MemoryRouter>
-    )
+    renderMain()
 
-    expect(screen.getByText("ProjectList:all")).toBeInTheDocument()
-    expect(screen.queryByText("ProjectList:mine")).not.toBeInTheDocument()
+    expect(screen.getByText("ProjectList:all::active")).toBeInTheDocument()
+    expect(screen.queryByText(/ProjectList:mine/)).not.toBeInTheDocument()
   })
 
   it("switches to My projects when that tab is clicked", async () => {
     mockAuthenticated()
 
-    render(
-      <MemoryRouter>
-        <MainPage />
-      </MemoryRouter>
-    )
+    renderMain()
 
     await userEvent.click(screen.getByText("My projects"))
-    expect(screen.getByText("ProjectList:mine")).toBeInTheDocument()
+    expect(screen.getByText("ProjectList:mine::active")).toBeInTheDocument()
+  })
+})
+
+describe("MainPage header and hero", () => {
+  it("shows the hero title", () => {
+    mockAuthenticated()
+    renderMain()
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeInTheDocument()
+  })
+
+  it("shows the user's initials and a theme toggle in the header", () => {
+    mockAuthenticated()
+    renderMain()
+    expect(screen.getByText("AL")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /switch to (dark|light) theme/i })).toBeInTheDocument()
+  })
+})
+
+describe("MainPage search and sort", () => {
+  it("passes the typed search value down to ProjectList", async () => {
+    mockAuthenticated()
+    renderMain()
+    await userEvent.type(screen.getByLabelText("Search projects"), "signal")
+    expect(screen.getByText("ProjectList:all:signal:active")).toBeInTheDocument()
+  })
+
+  it("passes the selected sort value down to ProjectList", async () => {
+    mockAuthenticated()
+    renderMain()
+    await userEvent.click(screen.getByRole("combobox", { name: "Sort" }))
+    await userEvent.click(await screen.findByText("Newest"))
+    expect(screen.getByText("ProjectList:all::newest")).toBeInTheDocument()
   })
 })
 
 describe("MainPage New project button", () => {
-  it("navigates to /projects/new when clicked", async () => {
+  it("opens the new project modal when clicked", async () => {
     mockAuthenticated()
 
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<MainPage />} />
-          <Route path="/projects/new" element={<div>new project page</div>} />
-        </Routes>
-      </MemoryRouter>
-    )
+    renderMain()
 
-    await userEvent.click(screen.getByText("New project"))
-    expect(await screen.findByText("new project page")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "+ New project" }))
+    expect(await screen.findByText("Create a project")).toBeInTheDocument()
   })
 })

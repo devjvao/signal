@@ -182,6 +182,60 @@ func TestFRList_OrdersByUpvotesThenNewest(t *testing.T) {
 	}
 }
 
+func TestFRList_FiltersByStatus(t *testing.T) {
+	h, pool := setupTestFeatureRequestHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	projectID := seedProject(t, pool, ownerID, "Signal", "signal", time.Now())
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	openID := seedFeatureRequest(t, pool, projectID, ownerID, "Open one", base)
+	plannedID := seedFeatureRequest(t, pool, projectID, ownerID, "Planned one", base.Add(time.Second))
+	if _, err := pool.Exec(context.Background(), "UPDATE feature_requests SET status = 'planned' WHERE id = $1", plannedID); err != nil {
+		t.Fatalf("failed to set status: %v", err)
+	}
+
+	secret := []byte("test-secret")
+	token, _ := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	r := frRouter(secret, func(g *gin.RouterGroup) { g.GET("/projects/:id/feature-requests", h.List) })
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/feature-requests?status=planned", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		FeatureRequests []struct {
+			ID string `json:"id"`
+		} `json:"featureRequests"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(resp.FeatureRequests) != 1 || resp.FeatureRequests[0].ID != plannedID {
+		t.Fatalf("expected only %s, got %+v (openID=%s)", plannedID, resp.FeatureRequests, openID)
+	}
+}
+
+func TestFRList_InvalidStatus(t *testing.T) {
+	h, pool := setupTestFeatureRequestHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	projectID := seedProject(t, pool, ownerID, "Signal", "signal", time.Now())
+	secret := []byte("test-secret")
+	token, _ := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	r := frRouter(secret, func(g *gin.RouterGroup) { g.GET("/projects/:id/feature-requests", h.List) })
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/feature-requests?status=banana", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestFRList_PaginatesAndExcludesSoftDeleted(t *testing.T) {
 	h, pool := setupTestFeatureRequestHandler(t)
 	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
@@ -244,6 +298,117 @@ func TestFRList_PaginatesAndExcludesSoftDeleted(t *testing.T) {
 	}
 	if len(seen) != len(want) {
 		t.Fatalf("expected %d, got %d", len(want), len(seen))
+	}
+}
+
+func TestFRList_SortNewest_OrdersByCreatedAt(t *testing.T) {
+	h, pool := setupTestFeatureRequestHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	voterID := seedUser(t, pool, "Grace Hopper", "grace@example.com")
+	projectID := seedProject(t, pool, ownerID, "Signal", "signal", time.Now())
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	older := seedFeatureRequest(t, pool, projectID, ownerID, "Older, more votes", base)
+	newer := seedFeatureRequest(t, pool, projectID, ownerID, "Newer, no votes", base.Add(time.Second))
+	seedVote(t, pool, older, voterID)
+
+	secret := []byte("test-secret")
+	token, _ := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	r := frRouter(secret, func(g *gin.RouterGroup) { g.GET("/projects/:id/feature-requests", h.List) })
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/feature-requests?sort=newest", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		FeatureRequests []struct {
+			ID string `json:"id"`
+		} `json:"featureRequests"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(resp.FeatureRequests) != 2 || resp.FeatureRequests[0].ID != newer || resp.FeatureRequests[1].ID != older {
+		t.Fatalf("expected [newer, older] regardless of votes, got %+v", resp.FeatureRequests)
+	}
+}
+
+func TestFRList_SortNewest_PaginatesAcrossPages(t *testing.T) {
+	h, pool := setupTestFeatureRequestHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	projectID := seedProject(t, pool, ownerID, "Signal", "signal", time.Now())
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 15; i++ {
+		id := seedFeatureRequest(t, pool, projectID, ownerID, "FR", base.Add(time.Duration(i)*time.Second))
+		want[id] = true
+	}
+
+	secret := []byte("test-secret")
+	token, _ := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	r := frRouter(secret, func(g *gin.RouterGroup) { g.GET("/projects/:id/feature-requests", h.List) })
+
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("too many pages")
+		}
+		path := "/projects/" + projectID + "/feature-requests?sort=newest&limit=5"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			FeatureRequests []struct {
+				ID string `json:"id"`
+			} `json:"featureRequests"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		for _, fr := range resp.FeatureRequests {
+			if seen[fr.ID] {
+				t.Fatalf("duplicate %s", fr.ID)
+			}
+			seen[fr.ID] = true
+		}
+		if resp.NextCursor == nil {
+			break
+		}
+		cursor = *resp.NextCursor
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("expected %d, got %d", len(want), len(seen))
+	}
+}
+
+func TestFRList_InvalidSort(t *testing.T) {
+	h, pool := setupTestFeatureRequestHandler(t)
+	ownerID := seedUser(t, pool, "Ada Lovelace", "ada@example.com")
+	projectID := seedProject(t, pool, ownerID, "Signal", "signal", time.Now())
+	secret := []byte("test-secret")
+	token, _ := auth.GenerateToken(secret, ownerID, "ada@example.com")
+	r := frRouter(secret, func(g *gin.RouterGroup) { g.GET("/projects/:id/feature-requests", h.List) })
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/feature-requests?sort=banana", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
