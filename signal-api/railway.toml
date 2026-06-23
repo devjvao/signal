@@ -3,7 +3,11 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-preDeployCommand = "migrate -path db/migrations -database $DB_URL up"
+# Wrapped in a shell so $DB_URL is expanded at runtime. Railway runs the
+# preDeploy command in exec form for Dockerfile services, which does not expand
+# environment variables; the shell wrapper restores expansion. Absolute path so
+# it does not depend on the preDeploy working directory.
+preDeployCommand = '/bin/sh -c "migrate -path /app/db/migrations -database $DB_URL up"'
 startCommand = "/app/api"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
