@@ -1,0 +1,14 @@
+# Secrets and local artifacts must never enter the build context.
+.env
+.env.*
+*.exe
+*.exe~
+/api
+
+# VCS and tooling
+.git
+.gitignore
+.github
+
+# Local Postgres data (if mounted under the service dir)
+db/data
